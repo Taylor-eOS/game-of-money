@@ -4,8 +4,8 @@ import settings
 
 creature_x    = np.empty(0, dtype=np.int32)
 creature_y    = np.empty(0, dtype=np.int32)
-creature_hp   = np.empty(0, dtype=np.float32)
-creature_gold = np.empty(0, dtype=np.float32)
+creature_hp   = np.empty(0, dtype=np.int32)
+creature_gold = np.empty(0, dtype=np.int32)
 world_blocks  = set()
 
 def init_world():
@@ -33,8 +33,8 @@ def spawn_creatures(count):
             ys.append(y)
     creature_x    = np.array(xs, dtype=np.int32)
     creature_y    = np.array(ys, dtype=np.int32)
-    creature_hp   = np.full(count, 100.0, dtype=np.float32)
-    creature_gold = np.zeros(count, dtype=np.float32)
+    creature_hp   = np.full(count, 100, dtype=np.int32)
+    creature_gold = np.zeros(count, dtype=np.int32)
 
 def update_creatures():
     global creature_x, creature_y

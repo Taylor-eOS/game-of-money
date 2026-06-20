@@ -23,12 +23,6 @@ def create_world_surface():
                          pygame.Rect(block_x * CELL_W, block_y * CELL_H, CELL_W, CELL_H))
     return surf
 
-def build_blit_list(creature_surf):
-    return [[creature_surf, pygame.Rect(int(game_logic.creature_x[i]) * CELL_W,
-                                        int(game_logic.creature_y[i]) * CELL_H,
-                                        CELL_W, CELL_H)]
-            for i in range(len(game_logic.creature_x))]
-
 def update_blit_list(blit_list):
     for i, entry in enumerate(blit_list):
         entry[1].x = int(game_logic.creature_x[i]) * CELL_W
@@ -47,11 +41,10 @@ def handle_events():
 
 def main():
     screen = init_display()
-    creature_surf = sprites.create_creature_surfaces(CELL_W, CELL_H)
     game_logic.init_world()
     world_surf = create_world_surface()
     game_logic.spawn_creatures(4)
-    blit_list = build_blit_list(creature_surf)
+    blit_list = sprites.build_blit_list(CELL_W, CELL_H, game_logic.creature_x, game_logic.creature_y)
     clock = pygame.time.Clock()
     while True:
         handle_events()

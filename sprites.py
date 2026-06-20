@@ -1,11 +1,14 @@
 import pygame
+import random
 
-def create_creature_surfaces(CELL_W, CELL_H):
+def random_shirt_color():
+    return (random.randint(80, 220), random.randint(80, 220), random.randint(80, 220))
+
+def create_creature_surfaces(CELL_W, CELL_H, shirt=(170, 70, 70)):
     scale = 4
     W, H = CELL_W * scale, CELL_H * scale
     surf = pygame.Surface((W, H), pygame.SRCALPHA)
     skin = (245, 205, 135)
-    shirt = (170, 70, 70)
     dark = (35, 25, 15)
     head_w = int(W * 0.55)
     head_h = int(H * 0.35)
@@ -23,3 +26,9 @@ def create_creature_surfaces(CELL_W, CELL_H):
     pygame.draw.rect(surf, dark, (hcx + int(head_w * 0.22) - 2, eye_y, 2, 2))
     return pygame.transform.scale(surf, (CELL_W, CELL_H)).convert_alpha()
 
+def build_blit_list(CELL_W, CELL_H, creature_x, creature_y):
+    return [[create_creature_surfaces(CELL_W, CELL_H, random_shirt_color()),
+             pygame.Rect(int(creature_x[i]) * CELL_W,
+                         int(creature_y[i]) * CELL_H,
+                         CELL_W, CELL_H)]
+            for i in range(len(creature_x))]
