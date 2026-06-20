@@ -1,2 +1,3 @@
 pygame
 numpy
+git+https://github.com/Taylor-eOS/gguf_llm_library.git

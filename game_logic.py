@@ -1,6 +1,7 @@
 import random
 import numpy as np
 import settings
+from gguf_llm_library import ask_llm
 
 creature_x    = np.empty(0, dtype=np.int32)
 creature_y    = np.empty(0, dtype=np.int32)
@@ -48,7 +49,6 @@ def spawn_creatures(count):
     creature_gold = np.zeros(count, dtype=np.int32)
 
 def get_creature_state(i):
-    print(get_area(int(creature_x[i]), int(creature_y[i])))
     return {
         "index": i,
         "x": int(creature_x[i]),
@@ -58,13 +58,39 @@ def get_creature_state(i):
         "area": get_area(int(creature_x[i]), int(creature_y[i])),
     }
 
-def decide_move(i):
-    dx = random.randint(-1, 1)
-    dy = random.randint(-1, 1)
-    return dx, dy
+def ask_intent(i):
+    x = int(creature_x[i])
+    half = settings.COLS // 2
+    side = "left" if x < half else "right"
+    other = "right" if side == "left" else "left"
+    area = get_area(x, int(creature_y[i]))
+    area_str = f" You are in '{area}'." if area else ""
+    prompt = (
+        f"You are a creature on the {side} side of the world.{area_str}"
+        f" You want to reach the {other} side."
+        f" Choose your intention: cross, stay."
+        f" Respond with exactly one of those words."
+    )
+    print(f"[creature {i}] prompt: {prompt}")
+    response = ask_llm(prompt).lower()
+    print(f"[creature {i}] response: {response!r}")
+    for intent in ("cross", "stay"):
+        if intent in response:
+            print(f"[creature {i}] intent: {intent}")
+            return intent
+    print(f"[creature {i}] WARNING: no intent parsed, defaulting to cross")
+    return "cross"
+
+def intent_to_delta(i, intent):
+    if intent == "stay":
+        return (0, 0)
+    x = int(creature_x[i])
+    half = settings.COLS // 2
+    return (1, 0) if x < half else (-1, 0)
 
 def update_creature(i):
-    dx, dy = decide_move(i)
+    intent = ask_intent(i)
+    dx, dy = intent_to_delta(i, intent)
     nx = int(creature_x[i]) + dx
     ny = int(creature_y[i]) + dy
     if not is_blocked(nx, ny):
