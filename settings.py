@@ -1,6 +1,7 @@
-SCALE = 10
-COLS = 140
-ROWS = 90
+SCALE = 12
+COLS = 120
+ROWS = 80
+SPEED = 1
 WALLS = [
     (10, 10, 30, 10),
     (30, 10, 30, 60)
