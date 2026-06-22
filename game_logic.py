@@ -166,9 +166,9 @@ def situational_sentence(i):
     x, y  = int(creature_x[i]), int(creature_y[i])
     hp    = int(creature_hp[i])
     gold  = int(creature_gold[i])
-    gdist = nearest_gold_distance(x, y)
+    gdist = int(nearest_gold_distance(x, y))
     others = nearby_creatures(i, x, y)
-    nearest_dist = others[0][0] if others else 999
+    nearest_dist = int(others[0][0]) if others else 999
     parts = []
     if hp < 40:
         parts.append("you are badly hurt")
@@ -203,9 +203,9 @@ def summarize_local_context(i):
         lines.append(f"last_intent: {creature_last_intent[i]}")
     others = nearby_creatures(i, x, y)
     if others:
-        near = [f"creature{j} dist={dist}" for dist, j, ox, oy in others[:3]]
+        near = [f"creature{j} dist={int(dist)}" for dist, j, ox, oy in others[:3]]
         lines.append("nearby: " + "; ".join(near))
-    gd = nearest_gold_distance(x, y)
+    gd = int(nearest_gold_distance(x, y))
     lines.append(f"nearest_gold: {gd} steps")
     for direction in DIRECTIONS:
         dx, dy = DIRECTION_DELTAS[direction]
@@ -213,12 +213,12 @@ def summarize_local_context(i):
         if is_blocked(nx, ny):
             lines.append(f"{direction}: blocked")
         else:
-            gdelta = gold_gradient(x, y, direction)
-            cdist  = nearest_creature_distance(i, nx, ny)
+            gdelta = int(round(gold_gradient(x, y, direction)))
+            cdist  = int(nearest_creature_distance(i, nx, ny))
             tag = ""
             if gdelta > 0:
                 tag += " [toward gold]"
-            if cdist < nearest_creature_distance(i, x, y):
+            if cdist < int(nearest_creature_distance(i, x, y)):
                 tag += " [toward creature]"
             lines.append(f"{direction}: open{tag}")
     return " | ".join(lines)
@@ -229,8 +229,6 @@ def ask_intent_llm(i):
         "You are the inner voice of a small creature in a social simulation. "
         "Given the situation below, write ONE short phrase (under ten words) describing "
         "what the creature feels like doing right now. Be specific to the situation. "
-        "Examples: 'go grab that gold', 'get away from the crowd', 'wander and see what's out there', "
-        "'stay cautious, I'm hurt', 'get closer and make my presence known'. "
         f"Situation: {context}"
     )
     print(f"[creature {i}] prompt: {prompt}")
@@ -245,19 +243,19 @@ def score_direction(i, direction, mode_coeffs):
     nx, ny = x + dx, y + dy
     if is_blocked(nx, ny):
         return -1e9
-    gdelta    = float(gold_gradient(x, y, direction))
-    density   = float(creature_density(nx, ny))
-    cdist     = float(nearest_creature_distance(i, nx, ny))
-    openness  = float(count_open_neighbors(nx, ny)) / 4.0
-    proximity = 1.0 / (1.0 + cdist)
+    gdelta    = round(gold_gradient(x, y, direction), 1)
+    density   = round(creature_density(nx, ny), 1)
+    cdist     = nearest_creature_distance(i, nx, ny)
+    openness  = round(count_open_neighbors(nx, ny) / 4.0, 2)
+    proximity = round(1.0 / (1.0 + cdist), 3)
     gold_pull, crowd_pull, space_pull, open_pull, caution_pull, aggro_pull = mode_coeffs
     score = (
-        gold_pull    * gdelta    +
-        crowd_pull   * density   +
-        space_pull   * cdist     +
-        open_pull    * openness  +
-        caution_pull * cdist     +
-        aggro_pull   * proximity
+        round(gold_pull, 1)    * gdelta    +
+        round(crowd_pull, 1)   * density   +
+        round(space_pull, 1)   * cdist     +
+        round(open_pull, 1)    * openness  +
+        round(caution_pull, 1) * cdist     +
+        round(aggro_pull, 1)   * proximity
     )
     return score
 
@@ -278,7 +276,8 @@ def choose_direction(i, mode: str):
     best_score = max(s for s, _ in scored)
     best_dirs  = [d for s, d in scored if s == best_score]
     choice = random.choice(best_dirs)
-    print(f"[creature {i}] mode={mode} scores={scored} -> {choice}")
+    formatted_scores = [(round(s, 2), d) for s, d in scored]
+    print(f"[creature {i}] mode={mode} scores={formatted_scores} -> {choice}")
     return choice
 
 def decide_move(i):
