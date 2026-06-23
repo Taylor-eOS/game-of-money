@@ -32,7 +32,6 @@ STATUS_RADIUS      = getattr(settings, "STATUS_RADIUS", 6)
 
 _tick_counter = 0
 
-
 def init_world():
     global world_blocks, world_areas, world_visit
     world_blocks = set()
@@ -136,14 +135,8 @@ def status_field_delta(x, y, nx, ny):
     return local_status_field(nx, ny) - local_status_field(x, y)
 
 def space_field_delta(x, y, nx, ny):
-    density_here = sum(
-        1 for j in range(len(creature_x))
-        if abs(int(creature_x[j]) - x) + abs(int(creature_y[j]) - y) <= 3
-    )
-    density_next = sum(
-        1 for j in range(len(creature_x))
-        if abs(int(creature_x[j]) - nx) + abs(int(creature_y[j]) - ny) <= 3
-    )
+    density_here = sum(1 for j in range(len(creature_x)) if abs(int(creature_x[j]) - x) + abs(int(creature_y[j]) - y) <= 3)
+    density_next = sum(1 for j in range(len(creature_x)) if abs(int(creature_x[j]) - nx) + abs(int(creature_y[j]) - ny) <= 3)
     return density_here - density_next
 
 def novelty_field_delta(x, y, nx, ny):
@@ -263,6 +256,7 @@ def build_interaction_prompt(i, j):
         return None, []
     options_text = "; ".join(f"{name}: {desc}" for name, desc in eligible)
     prompt = (
+        f"You are in a grid game simulation. "
         f"Two creatures meet. "
         f"Creature {i}: hp={int(creature_hp[i])}, gold={int(creature_gold[i])}, "
         f"status={float(creature_status[i]):.2f}, "

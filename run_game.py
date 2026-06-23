@@ -24,8 +24,10 @@ def create_world_surface():
         pygame.draw.rect(surf, (100, 100, 100),
                          pygame.Rect(block_x * CELL_W, block_y * CELL_H, CELL_W, CELL_H))
     for gx, gy in game_logic.gold_positions:
-        pygame.draw.rect(surf, GOLD_COLOR,
-                         pygame.Rect(gx * CELL_W, gy * CELL_H, CELL_W, CELL_H))
+        center_x = gx * CELL_W + CELL_W // 2
+        center_y = gy * CELL_H + CELL_H // 2
+        radius = min(CELL_W, CELL_H) // 3
+        pygame.draw.circle(surf, GOLD_COLOR, (center_x, center_y), radius)
     return surf
 
 def status_to_color(status_val, max_status=10.0):
