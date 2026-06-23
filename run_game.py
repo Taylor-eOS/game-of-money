@@ -1,8 +1,8 @@
 import pygame
 import sys
 import game_logic
-import settings
 import sprites
+import settings
 
 pygame.init()
 CELL_W = settings.SCALE
@@ -18,8 +18,6 @@ def init_display():
 GOLD_COLOR = (255, 215, 0)
 
 def create_world_surface():
-    # This is now called every frame (cheap since gold changes), 
-    # or you can keep a dirty flag. Simplest: just redraw.
     surf = pygame.Surface((WIDTH, HEIGHT)).convert()
     surf.fill((255, 255, 255))
     for block_x, block_y in game_logic.world_blocks:
@@ -30,14 +28,22 @@ def create_world_surface():
                          pygame.Rect(gx * CELL_W, gy * CELL_H, CELL_W, CELL_H))
     return surf
 
-def update_blit_list(blit_list):
-    for i, entry in enumerate(blit_list):
-        entry[1].x = int(game_logic.creature_x[i]) * CELL_W
-        entry[1].y = int(game_logic.creature_y[i]) * CELL_H
+def status_to_color(status_val, max_status=10.0):
+    t = min(float(status_val) / max_status, 1.0)
+    r = int(50  + (205 * t))
+    g = int(200 - (150 * t))
+    b = int(50)
+    return (r, g, b)
 
-def render_frame(screen, world_surf, blit_list):
+def render_frame(screen, world_surf):
     screen.blit(world_surf, (0, 0))
-    screen.blits(blit_list)
+    n = len(game_logic.creature_x)
+    for i in range(n):
+        cx = int(game_logic.creature_x[i]) * CELL_W
+        cy = int(game_logic.creature_y[i]) * CELL_H
+        shirt = status_to_color(game_logic.creature_status[i])
+        surf = sprites.create_creature_surfaces(CELL_W, CELL_H, shirt)
+        screen.blit(surf, (cx, cy))
     pygame.display.flip()
 
 def handle_events():
@@ -50,14 +56,12 @@ def main():
     screen = init_display()
     game_logic.init_world()
     game_logic.spawn_creatures(4)
-    blit_list = sprites.build_blit_list(CELL_W, CELL_H, game_logic.creature_x, game_logic.creature_y)
     clock = pygame.time.Clock()
     while True:
         handle_events()
         game_logic.update_creatures()
-        world_surf = create_world_surface()   # rebuild each frame to show gold changes
-        update_blit_list(blit_list)
-        render_frame(screen, world_surf, blit_list)
+        world_surf = create_world_surface()
+        render_frame(screen, world_surf)
         clock.tick(settings.SPEED)
 
 if __name__ == "__main__":
