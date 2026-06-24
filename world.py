@@ -7,8 +7,6 @@ world_areas = []
 world_visit = np.empty((0, 0), dtype=np.int32)
 gold_positions = set()
 gold_respawn_timer = {}
-GOLD_COUNT = getattr(settings, "GOLD_COUNT", 12)
-GOLD_RESPAWN_TICKS = getattr(settings, "GOLD_RESPAWN_TICKS", 30)
 
 def init_world():
     global world_blocks, world_areas, world_visit
@@ -23,7 +21,7 @@ def init_world():
         for x1, y1, x2, y2, name in settings.AREAS:
             world_areas.append((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2), name))
     world_visit = np.zeros((settings.ROWS, settings.COLS), dtype=np.int32)
-    spawn_gold(GOLD_COUNT)
+    spawn_gold(settings.GOLD_COUNT)
 
 def is_blocked(x, y):
     if x < 0 or y < 0 or x >= settings.COLS or y >= settings.ROWS:

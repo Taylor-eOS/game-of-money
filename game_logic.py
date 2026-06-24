@@ -1,3 +1,4 @@
+import heapq
 import numpy as np
 import random
 import settings
@@ -16,13 +17,13 @@ creature_alive = np.empty(0, dtype=np.bool_)
 creature_last_action = []
 creature_last_interaction = []
 creature_shirt = []
+creature_target = []
+creature_path = []
+
 TRAIT_NAMES = ("wealth_drive", "status_drive", "social_distance", "curiosity", "caution", "aggression")
 DIRECTIONS = ("north", "south", "east", "west")
 DIRECTION_DELTAS = {"north": (0, -1), "south": (0, 1), "east": (1, 0), "west": (-1, 0)}
 NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
-GENERATION_TICKS = getattr(settings, "GENERATION_TICKS", 200)
-STATUS_DECAY = getattr(settings, "STATUS_DECAY", 0.005)
-STATUS_RADIUS = getattr(settings, "STATUS_RADIUS", 6)
 _tick_counter = 0
 
 def init_world():
@@ -35,7 +36,7 @@ def local_status_field(x, y):
             continue
         ox, oy = int(creature_x[j]), int(creature_y[j])
         dist = abs(ox - x) + abs(oy - y)
-        if 0 < dist <= STATUS_RADIUS:
+        if 0 < dist <= settings.STATUS_RADIUS:
             total += float(creature_status[j]) / dist
     return total
 
@@ -54,6 +55,7 @@ def spawn_creatures(count):
     global creature_x, creature_y, creature_hp, creature_gold, creature_age
     global creature_status, creature_traits, creature_last_action
     global creature_last_interaction, creature_score, creature_shirt, creature_alive
+    global creature_target, creature_path
     xs, ys = [], []
     while len(xs) < count:
         x = random.randint(0, settings.COLS - 1)
@@ -76,85 +78,122 @@ def spawn_creatures(count):
         (random.randint(80, 220), random.randint(80, 220), random.randint(80, 220))
         for _ in range(count)
     ]
+    creature_target = [None] * count
+    creature_path = [[] for _ in range(count)]
 
-def gold_field_delta(x, y, nx, ny):
-    return world.nearest_gold_distance(x, y) - world.nearest_gold_distance(nx, ny)
+def astar(sx, sy, gx, gy):
+    if world.is_blocked(gx, gy):
+        return []
+    if sx == gx and sy == gy:
+        return []
+    open_heap = []
+    heapq.heappush(open_heap, (0, sx, sy))
+    came_from = {}
+    g_score = {(sx, sy): 0}
+    nodes_expanded = 0
+    while open_heap:
+        if nodes_expanded >= settings.ASTAR_MAX_NODES:
+            break
+        _, cx, cy = heapq.heappop(open_heap)
+        nodes_expanded += 1
+        if cx == gx and cy == gy:
+            path = []
+            cur = (cx, cy)
+            while cur in came_from:
+                path.append(cur)
+                cur = came_from[cur]
+            path.reverse()
+            return path
+        for dx, dy in NEIGHBOR_DELTAS:
+            nx, ny = cx + dx, cy + dy
+            if world.is_blocked(nx, ny):
+                continue
+            tentative_g = g_score[(cx, cy)] + 1
+            if tentative_g < g_score.get((nx, ny), float("inf")):
+                came_from[(nx, ny)] = (cx, cy)
+                g_score[(nx, ny)] = tentative_g
+                f = tentative_g + abs(nx - gx) + abs(ny - gy)
+                heapq.heappush(open_heap, (f, nx, ny))
+    return []
 
-def status_field_delta(x, y, nx, ny):
-    return local_status_field(nx, ny) - local_status_field(x, y)
+def _random_open_cell():
+    for _ in range(200):
+        x = random.randint(0, settings.COLS - 1)
+        y = random.randint(0, settings.ROWS - 1)
+        if not world.is_blocked(x, y):
+            return x, y
+    return None, None
 
-def space_field_delta(x, y, nx, ny):
-    density_here = sum(1 for j in range(len(creature_x)) if creature_alive[j] and abs(int(creature_x[j]) - x) + abs(int(creature_y[j]) - y) <= 3)
-    density_next = sum(1 for j in range(len(creature_x)) if creature_alive[j] and abs(int(creature_x[j]) - nx) + abs(int(creature_y[j]) - ny) <= 3)
-    return density_here - density_next
-
-def novelty_field_delta(x, y, nx, ny):
-    return int(world.world_visit[y, x]) - int(world.world_visit[ny, nx])
-
-def openness_field(nx, ny):
-    return world.count_open_neighbors(nx, ny) / 4.0
-
-def composite_field_value(i, nx, ny):
+def select_target(i):
     x, y = int(creature_x[i]), int(creature_y[i])
-    t = creature_traits[i]
-    wealth_drive = float(t[0])
-    status_drive = float(t[1])
-    social_distance = float(t[2])
-    curiosity = float(t[3])
-    caution = float(t[4])
-    value = (
-        wealth_drive    * gold_field_delta(x, y, nx, ny)   +
-        status_drive    * status_field_delta(x, y, nx, ny) +
-        social_distance * space_field_delta(x, y, nx, ny)  +
-        curiosity       * novelty_field_delta(x, y, nx, ny)+
-        caution         * openness_field(nx, ny)
-    )
-    return value
+    if world.gold_positions:
+        gx, gy = min(world.gold_positions, key=lambda p: abs(p[0] - x) + abs(p[1] - y))
+        return {"type": "gold", "pos": (gx, gy)}
+    wx, wy = _random_open_cell()
+    if wx is not None:
+        return {"type": "wander", "pos": (wx, wy)}
+    return None
+
+def _target_position(i, target):
+    if target is None:
+        return None, None
+    if target["type"] in ("gold", "wander"):
+        return target["pos"]
+    if target["type"] == "creature":
+        j = target["id"]
+        if j < len(creature_x) and creature_alive[j]:
+            return int(creature_x[j]), int(creature_y[j])
+    return None, None
+
+def _target_still_valid(i, target):
+    if target is None:
+        return False
+    if target["type"] == "gold":
+        return target["pos"] in world.gold_positions
+    if target["type"] == "wander":
+        return True
+    if target["type"] == "creature":
+        j = target["id"]
+        return j < len(creature_x) and creature_alive[j]
+    return False
+
+def _path_still_valid(i):
+    path = creature_path[i]
+    if not path:
+        return False
+    nx, ny = path[0]
+    return not world.is_blocked(nx, ny)
 
 def choose_move(i):
     x, y = int(creature_x[i]), int(creature_y[i])
-    target = choose_target(i)
-    best_value = None
-    best_cells = []
-    for dx, dy in NEIGHBOR_DELTAS:
-        nx, ny = x + dx, y + dy
-        if world.is_blocked(nx, ny):
-            continue
-        val = target_field_value(i, target, nx, ny)
-        if best_value is None or val > best_value:
-            best_value = val
-            best_cells = [(nx, ny)]
-        elif val == best_value:
-            best_cells.append((nx, ny))
-    if not best_cells:
+    target = creature_target[i]
+    if not _target_still_valid(i, target):
+        target = select_target(i)
+        creature_target[i] = target
+        creature_path[i] = []
+    if target is None:
         return x, y
-    return random.choice(best_cells)
-
-def choose_target(i):
-    return {"type": "composite"}
-
-def composite_field_value(i, nx, ny):
-    x, y = int(creature_x[i]), int(creature_y[i])
-    t = creature_traits[i]
-    wealth_drive = float(t[0])
-    status_drive = float(t[1])
-    social_distance = float(t[2])
-    curiosity = float(t[3])
-    caution = float(t[4])
-    value = (
-        wealth_drive * gold_field_delta(x, y, nx, ny) +
-        status_drive * status_field_delta(x, y, nx, ny) +
-        social_distance * space_field_delta(x, y, nx, ny) +
-        curiosity * novelty_field_delta(x, y, nx, ny) +
-        caution * openness_field(nx, ny)
-    )
-    return value
-
-def target_field_value(i, target, nx, ny):
-    target_type = target["type"]
-    if target_type == "composite":
-        return composite_field_value(i, nx, ny)
-    return 0.0
+    tx, ty = _target_position(i, target)
+    if tx is None:
+        creature_target[i] = None
+        creature_path[i] = []
+        return x, y
+    if x == tx and y == ty:
+        creature_target[i] = None
+        creature_path[i] = []
+        return x, y
+    if target["type"] == "creature":
+        creature_path[i] = []
+    if not _path_still_valid(i):
+        creature_path[i] = astar(x, y, tx, ty)
+    if creature_path[i]:
+        nx, ny = creature_path[i].pop(0)
+        return nx, ny
+    for dx, dy in random.sample(list(NEIGHBOR_DELTAS), len(NEIGHBOR_DELTAS)):
+        nx, ny = x + dx, y + dy
+        if not world.is_blocked(nx, ny):
+            return nx, ny
+    return x, y
 
 def _effect_talk(i, j):
     aggression_i = float(creature_traits[i, 5])
@@ -199,7 +238,7 @@ INTERACTION_TYPES = {
 def build_interaction_prompt(i, j, interaction_type, outcome):
     desc = INTERACTION_TYPES[interaction_type]["description"]
     prompt = (
-        f"You are narrating a grid world simulation. Two creatures meet and {desc}. "
+        f"Two creatures meet and {desc} in a grid world simulation. "
         f"Creature {i}: hp={int(creature_hp[i])}, gold={int(creature_gold[i])}, "
         f"status={float(creature_status[i]):.2f}, "
         f"aggression={float(creature_traits[i, 5]):.2f}, "
@@ -212,8 +251,6 @@ def build_interaction_prompt(i, j, interaction_type, outcome):
     )
     return prompt
 
-INTERACTION_CHANCE = getattr(settings, "INTERACTION_CHANCE", 0.4)
-
 def handle_proximity_events(i):
     x, y = int(creature_x[i]), int(creature_y[i])
     others = nearby_creatures(i, x, y)
@@ -222,7 +259,7 @@ def handle_proximity_events(i):
     nearest_dist, j, ox, oy = others[0]
     if nearest_dist > 1:
         return
-    if random.random() > INTERACTION_CHANCE:
+    if random.random() > settings.INTERACTION_CHANCE:
         return
     aggression = float(creature_traits[i, 5])
     status_drive = float(creature_traits[i, 1])
@@ -234,7 +271,7 @@ def handle_proximity_events(i):
         interaction_type = "talk"
     creature_last_interaction[i] = interaction_type
     outcome = INTERACTION_TYPES[interaction_type]["effect"](i, j)
-    if getattr(settings, "ENABLE_LLM_INTERACTIONS", True):
+    if settings.ENABLE_LLM_INTERACTIONS:
         prompt = build_interaction_prompt(i, j, interaction_type, outcome)
         print(f"[interaction {i},{j}] type={interaction_type} prompt: {prompt}")
         flavor = ask_llm(prompt, settings.LLM_MODEL).strip()
@@ -250,6 +287,9 @@ def check_gold_pickup(i):
         creature_status[i] = np.clip(creature_status[i] + 1.0, 0.0, 10.0)
         world.gold_respawn_timer[pos] = world.GOLD_RESPAWN_TICKS
         creature_score[i] += 2.0
+        if creature_target[i] is not None and creature_target[i].get("pos") == pos:
+            creature_target[i] = None
+            creature_path[i] = []
         print(f"[creature {i}] picked up gold at {pos}, total={int(creature_gold[i])}")
 
 def accumulate_survival_score(i):
@@ -258,21 +298,10 @@ def accumulate_survival_score(i):
 
 def tick_status_decay():
     global creature_status
-    creature_status = np.clip(creature_status - STATUS_DECAY, 0.0, 10.0)
+    creature_status = np.clip(creature_status - settings.STATUS_DECAY, 0.0, 10.0)
 
 def apply_personality_feedback(i, moved, nx, ny):
-    if not getattr(settings, "ENABLE_PERSONALITY_LEARNING", False):
-        return
-    x, y = int(creature_x[i]), int(creature_y[i])
-    lr = 0.001
-    if moved:
-        creature_traits[i, 0] = np.clip(creature_traits[i, 0] + lr * gold_field_delta(x, y, nx, ny),    0.0, 1.0)
-        creature_traits[i, 1] = np.clip(creature_traits[i, 1] + lr * status_field_delta(x, y, nx, ny),  0.0, 1.0)
-        creature_traits[i, 2] = np.clip(creature_traits[i, 2] + lr * space_field_delta(x, y, nx, ny),   0.0, 1.0)
-        creature_traits[i, 3] = np.clip(creature_traits[i, 3] + lr * novelty_field_delta(x, y, nx, ny), 0.0, 1.0)
-        creature_traits[i, 4] = np.clip(creature_traits[i, 4] - lr * 0.5,                               0.0, 1.0)
-    else:
-        creature_traits[i, 4] = np.clip(creature_traits[i, 4] + lr * 0.5, 0.0, 1.0)
+    pass
 
 def apply_generational_nudge():
     alive_indices = [i for i in range(len(creature_x)) if creature_alive[i]]
@@ -280,7 +309,7 @@ def apply_generational_nudge():
         return
     best_i = alive_indices[int(np.argmax(creature_score[alive_indices]))]
     best_traits = creature_traits[best_i].copy()
-    nudge = getattr(settings, "GENERATION_NUDGE_RATE", 0.02)
+    nudge = settings.GENERATION_NUDGE_RATE
     for i in alive_indices:
         if i == best_i:
             continue
@@ -319,6 +348,5 @@ def update_creatures():
         if creature_alive[i]:
             update_creature_interact(i)
     _tick_counter += 1
-    if _tick_counter % GENERATION_TICKS == 0:
+    if _tick_counter % settings.GENERATION_TICKS == 0:
         apply_generational_nudge()
-
