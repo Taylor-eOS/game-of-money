@@ -1,5 +1,10 @@
 import pygame
 import random
+from settings import SCALE, GOLD_SHAPE
+
+GOLD_COLOR = (255, 215, 0)
+CELL_W = SCALE
+CELL_H = SCALE
 
 def random_shirt_color():
     return (random.randint(80, 220), random.randint(80, 220), random.randint(80, 220))
@@ -32,3 +37,10 @@ def build_blit_list(CELL_W, CELL_H, creature_x, creature_y):
                          int(creature_y[i]) * CELL_H,
                          CELL_W, CELL_H)]
             for i in range(len(creature_x))]
+
+def create_gold_shape(surf, grid_x, grid_y):
+    center_x = grid_x * CELL_W + CELL_W // 2
+    center_y = grid_y * CELL_H + CELL_H // 2
+    radius = min(CELL_W, CELL_H) // GOLD_SHAPE
+    pygame.draw.circle(surf, GOLD_COLOR, (center_x, center_y), radius)
+

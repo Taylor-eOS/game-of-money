@@ -1,5 +1,5 @@
-import pygame
 import sys
+import pygame
 import game_logic
 import sprites
 import settings
@@ -7,15 +7,13 @@ import settings
 pygame.init()
 CELL_W = settings.SCALE
 CELL_H = settings.SCALE
-WIDTH  = settings.COLS * CELL_W
+WIDTH = settings.COLS * CELL_W
 HEIGHT = settings.ROWS * CELL_H
 
 def init_display():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Game of Money")
     return screen
-
-GOLD_COLOR = (255, 215, 0)
 
 def create_world_surface():
     surf = pygame.Surface((WIDTH, HEIGHT)).convert()
@@ -24,10 +22,7 @@ def create_world_surface():
         pygame.draw.rect(surf, (100, 100, 100),
                          pygame.Rect(block_x * CELL_W, block_y * CELL_H, CELL_W, CELL_H))
     for gx, gy in game_logic.gold_positions:
-        center_x = gx * CELL_W + CELL_W // 2
-        center_y = gy * CELL_H + CELL_H // 2
-        radius = min(CELL_W, CELL_H) // 3
-        pygame.draw.circle(surf, GOLD_COLOR, (center_x, center_y), radius)
+        sprites.create_gold_shape(surf, gx, gy)
     return surf
 
 def status_to_color(status_val, max_status=10.0):

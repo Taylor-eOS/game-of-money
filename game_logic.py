@@ -24,11 +24,11 @@ DIRECTIONS = ("north", "south", "east", "west")
 DIRECTION_DELTAS = {"north": (0, -1), "south": (0, 1), "east": (1, 0), "west": (-1, 0)}
 NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
 
-GOLD_COUNT         = getattr(settings, "GOLD_COUNT", 12)
+GOLD_COUNT = getattr(settings, "GOLD_COUNT", 12)
 GOLD_RESPAWN_TICKS = getattr(settings, "GOLD_RESPAWN_TICKS", 30)
-GENERATION_TICKS   = getattr(settings, "GENERATION_TICKS", 200)
-STATUS_DECAY       = getattr(settings, "STATUS_DECAY", 0.005)
-STATUS_RADIUS      = getattr(settings, "STATUS_RADIUS", 6)
+GENERATION_TICKS = getattr(settings, "GENERATION_TICKS", 200)
+STATUS_DECAY = getattr(settings, "STATUS_DECAY", 0.005)
+STATUS_RADIUS = getattr(settings, "STATUS_RADIUS", 6)
 
 _tick_counter = 0
 
@@ -117,16 +117,16 @@ def spawn_creatures(count):
         if not is_blocked(x, y):
             xs.append(x)
             ys.append(y)
-    creature_x            = np.array(xs, dtype=np.int32)
-    creature_y            = np.array(ys, dtype=np.int32)
-    creature_hp           = np.full(count, 100, dtype=np.int32)
-    creature_gold         = np.zeros(count, dtype=np.int32)
-    creature_age          = np.zeros(count, dtype=np.int32)
-    creature_status       = np.zeros(count, dtype=np.float32)
-    creature_traits       = np.random.uniform(0.25, 0.75, size=(count, len(TRAIT_NAMES))).astype(np.float32)
-    creature_last_action  = [""] * count
+    creature_x = np.array(xs, dtype=np.int32)
+    creature_y = np.array(ys, dtype=np.int32)
+    creature_hp = np.full(count, 100, dtype=np.int32)
+    creature_gold = np.zeros(count, dtype=np.int32)
+    creature_age = np.zeros(count, dtype=np.int32)
+    creature_status = np.zeros(count, dtype=np.float32)
+    creature_traits = np.random.uniform(0.25, 0.75, size=(count, len(TRAIT_NAMES))).astype(np.float32)
+    creature_last_action = [""] * count
     creature_last_interaction = [""] * count
-    creature_score        = np.zeros(count, dtype=np.float32)
+    creature_score = np.zeros(count, dtype=np.float32)
 
 def gold_field_delta(x, y, nx, ny):
     return nearest_gold_distance(x, y) - nearest_gold_distance(nx, ny)
@@ -148,11 +148,11 @@ def openness_field(nx, ny):
 def composite_field_value(i, nx, ny):
     x, y = int(creature_x[i]), int(creature_y[i])
     t = creature_traits[i]
-    wealth_drive    = float(t[0])
-    status_drive    = float(t[1])
+    wealth_drive = float(t[0])
+    status_drive = float(t[1])
     social_distance = float(t[2])
-    curiosity       = float(t[3])
-    caution         = float(t[4])
+    curiosity = float(t[3])
+    caution = float(t[4])
     value = (
         wealth_drive    * gold_field_delta(x, y, nx, ny)   +
         status_drive    * status_field_delta(x, y, nx, ny) +
@@ -189,9 +189,9 @@ def _effect_mug(i, j):
 
 def _effect_display(i, j):
     winner = i if float(creature_status[i]) >= float(creature_status[j]) else j
-    loser  = j if winner == i else i
+    loser = j if winner == i else i
     creature_status[winner] = np.clip(creature_status[winner] + 0.2, 0.0, 10.0)
-    creature_status[loser]  = np.clip(creature_status[loser]  - 0.1, 0.0, 10.0)
+    creature_status[loser] = np.clip(creature_status[loser]  - 0.1, 0.0, 10.0)
     creature_score[winner] += 0.5
     print(f"[creature {i}] status display with {j}: winner={winner}")
 
@@ -211,10 +211,10 @@ def _effect_challenge(i, j):
     power_i = float(creature_status[i]) + float(creature_traits[i, 5]) + random.random()
     power_j = float(creature_status[j]) + float(creature_traits[j, 5]) + random.random()
     winner = i if power_i >= power_j else j
-    loser  = j if winner == i else i
-    creature_hp[loser]  = max(0, int(creature_hp[loser]) - random.randint(5, 20))
+    loser = j if winner == i else i
+    creature_hp[loser] = max(0, int(creature_hp[loser]) - random.randint(5, 20))
     creature_status[winner] = np.clip(creature_status[winner] + 0.4, 0.0, 10.0)
-    creature_status[loser]  = np.clip(creature_status[loser]  - 0.2, 0.0, 10.0)
+    creature_status[loser] = np.clip(creature_status[loser]  - 0.2, 0.0, 10.0)
     creature_score[winner] += 1.0
     print(f"[creature {i}] challenged creature {j}: winner={winner}")
 
@@ -326,9 +326,9 @@ def apply_generational_nudge():
     n = len(creature_x)
     if n < 2:
         return
-    best_i      = int(np.argmax(creature_score))
+    best_i = int(np.argmax(creature_score))
     best_traits = creature_traits[best_i].copy()
-    nudge       = getattr(settings, "GENERATION_NUDGE_RATE", 0.02)
+    nudge = getattr(settings, "GENERATION_NUDGE_RATE", 0.02)
     for i in range(n):
         if i == best_i:
             continue
