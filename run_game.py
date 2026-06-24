@@ -44,6 +44,8 @@ def render_frame(screen, world_surf):
     screen.blit(world_surf, (0, 0))
     n = len(game_logic.creature_x)
     for i in range(n):
+        if not game_logic.creature_alive[i]:
+            continue
         cx = int(game_logic.creature_x[i]) * CELL_W
         cy = int(game_logic.creature_y[i]) * CELL_H
         surf = sprites.create_creature_surface(CELL_W, CELL_H, game_logic.creature_shirt[i])
@@ -59,7 +61,7 @@ def handle_events():
 def main():
     screen = init_display()
     game_logic.init_world()
-    game_logic.spawn_creatures(5)
+    game_logic.spawn_creatures(settings.CREATURE_COUNT)
     clock = pygame.time.Clock()
     while True:
         handle_events()

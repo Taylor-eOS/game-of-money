@@ -11,9 +11,10 @@ creature_gold = np.empty(0, dtype=np.int32)
 creature_age = np.empty(0, dtype=np.int32)
 creature_status = np.empty(0, dtype=np.float32)
 creature_traits = np.empty((0, 6), dtype=np.float32)
+creature_score = np.empty(0, dtype=np.float32)
+creature_alive = np.empty(0, dtype=np.bool_)
 creature_last_action = []
 creature_last_interaction = []
-creature_score = np.empty(0, dtype=np.float32)
 creature_shirt = []
 TRAIT_NAMES = ("wealth_drive", "status_drive", "social_distance", "curiosity", "caution", "aggression")
 DIRECTIONS = ("north", "south", "east", "west")
@@ -30,6 +31,8 @@ def init_world():
 def local_status_field(x, y):
     total = 0.0
     for j in range(len(creature_x)):
+        if not creature_alive[j]:
+            continue
         ox, oy = int(creature_x[j]), int(creature_y[j])
         dist = abs(ox - x) + abs(oy - y)
         if 0 < dist <= STATUS_RADIUS:
@@ -39,7 +42,7 @@ def local_status_field(x, y):
 def nearby_creatures(i, x, y):
     others = []
     for j in range(len(creature_x)):
-        if j == i:
+        if j == i or not creature_alive[j]:
             continue
         ox, oy = int(creature_x[j]), int(creature_y[j])
         dist = abs(ox - x) + abs(oy - y)
@@ -50,7 +53,7 @@ def nearby_creatures(i, x, y):
 def spawn_creatures(count):
     global creature_x, creature_y, creature_hp, creature_gold, creature_age
     global creature_status, creature_traits, creature_last_action
-    global creature_last_interaction, creature_score, creature_shirt
+    global creature_last_interaction, creature_score, creature_shirt, creature_alive
     xs, ys = [], []
     while len(xs) < count:
         x = random.randint(0, settings.COLS - 1)
@@ -68,6 +71,7 @@ def spawn_creatures(count):
     creature_last_action = [""] * count
     creature_last_interaction = [""] * count
     creature_score = np.zeros(count, dtype=np.float32)
+    creature_alive = np.ones(count, dtype=np.bool_)
     creature_shirt = [
         (random.randint(80, 220), random.randint(80, 220), random.randint(80, 220))
         for _ in range(count)
@@ -80,8 +84,8 @@ def status_field_delta(x, y, nx, ny):
     return local_status_field(nx, ny) - local_status_field(x, y)
 
 def space_field_delta(x, y, nx, ny):
-    density_here = sum(1 for j in range(len(creature_x)) if abs(int(creature_x[j]) - x) + abs(int(creature_y[j]) - y) <= 3)
-    density_next = sum(1 for j in range(len(creature_x)) if abs(int(creature_x[j]) - nx) + abs(int(creature_y[j]) - ny) <= 3)
+    density_here = sum(1 for j in range(len(creature_x)) if creature_alive[j] and abs(int(creature_x[j]) - x) + abs(int(creature_y[j]) - y) <= 3)
+    density_next = sum(1 for j in range(len(creature_x)) if creature_alive[j] and abs(int(creature_x[j]) - nx) + abs(int(creature_y[j]) - ny) <= 3)
     return density_here - density_next
 
 def novelty_field_delta(x, y, nx, ny):
@@ -145,6 +149,9 @@ def _effect_fight(i, j, outcome):
     winner = i if power_i >= power_j else j
     loser = j if winner == i else i
     creature_hp[loser] = max(0, int(creature_hp[loser]) - random.randint(5, 20))
+    if creature_hp[loser] == 0:
+        creature_alive[loser] = False
+        print(f"[creature {loser}] died in combat with creature {winner}")
     creature_status[winner] = np.clip(creature_status[winner] + 0.4, 0.0, 10.0)
     creature_status[loser] = np.clip(creature_status[loser] - 0.2, 0.0, 10.0)
     creature_score[winner] += 1.0
@@ -237,13 +244,13 @@ def apply_personality_feedback(i, moved, nx, ny):
         creature_traits[i, 4] = np.clip(creature_traits[i, 4] + lr * 0.5, 0.0, 1.0)
 
 def apply_generational_nudge():
-    n = len(creature_x)
-    if n < 2:
+    alive_indices = [i for i in range(len(creature_x)) if creature_alive[i]]
+    if len(alive_indices) < 2:
         return
-    best_i = int(np.argmax(creature_score))
+    best_i = alive_indices[int(np.argmax(creature_score[alive_indices]))]
     best_traits = creature_traits[best_i].copy()
     nudge = getattr(settings, "GENERATION_NUDGE_RATE", 0.02)
-    for i in range(n):
+    for i in alive_indices:
         if i == best_i:
             continue
         creature_traits[i] = np.clip(
@@ -273,7 +280,8 @@ def update_creatures():
     world.tick_gold_respawn()
     tick_status_decay()
     for i in range(len(creature_x)):
-        update_creature(i)
+        if creature_alive[i]:
+            update_creature(i)
     _tick_counter += 1
     if _tick_counter % GENERATION_TICKS == 0:
         apply_generational_nudge()
