@@ -180,94 +180,56 @@ def choose_move(i):
         return x, y
     return random.choice(best_cells)
 
-def _effect_mug(i, j):
-    creature_gold[j] -= 1
-    creature_gold[i] += 1
-    creature_status[i] = np.clip(creature_status[i] + 0.3, 0.0, 10.0)
-    creature_score[i] += 1.5
-    print(f"[creature {i}] mugged creature {j}")
+def _effect_talk(i, j, outcome):
+    boost = 0.1 if "friendly" in outcome or "positive" in outcome else 0.0
+    creature_status[i] = np.clip(creature_status[i] + boost, 0.0, 10.0)
+    creature_score[i] += 0.2
+    print(f"[creature {i}] talked to creature {j}: {outcome}")
 
-def _effect_display(i, j):
-    winner = i if float(creature_status[i]) >= float(creature_status[j]) else j
-    loser = j if winner == i else i
-    creature_status[winner] = np.clip(creature_status[winner] + 0.2, 0.0, 10.0)
-    creature_status[loser] = np.clip(creature_status[loser]  - 0.1, 0.0, 10.0)
-    creature_score[winner] += 0.5
-    print(f"[creature {i}] status display with {j}: winner={winner}")
+def _effect_trade(i, j, outcome):
+    if "success" in outcome and int(creature_gold[i]) > 0:
+        creature_gold[i] -= 1
+        creature_gold[j] += 1
+        creature_status[i] = np.clip(creature_status[i] + 0.2, 0.0, 10.0)
+        creature_score[i] += 0.5
+    print(f"[creature {i}] traded with creature {j}: {outcome}")
 
-def _effect_yield(i, j):
-    creature_status[j] = np.clip(creature_status[j] + 0.15, 0.0, 10.0)
-    creature_score[j] += 0.3
-    print(f"[creature {i}] yielded to creature {j}")
-
-def _effect_gift(i, j):
-    creature_gold[i] -= 1
-    creature_gold[j] += 1
-    creature_status[i] = np.clip(creature_status[i] + 0.25, 0.0, 10.0)
-    creature_score[i] += 0.4
-    print(f"[creature {i}] gifted gold to creature {j}")
-
-def _effect_challenge(i, j):
+def _effect_fight(i, j, outcome):
     power_i = float(creature_status[i]) + float(creature_traits[i, 5]) + random.random()
     power_j = float(creature_status[j]) + float(creature_traits[j, 5]) + random.random()
     winner = i if power_i >= power_j else j
     loser = j if winner == i else i
     creature_hp[loser] = max(0, int(creature_hp[loser]) - random.randint(5, 20))
     creature_status[winner] = np.clip(creature_status[winner] + 0.4, 0.0, 10.0)
-    creature_status[loser] = np.clip(creature_status[loser]  - 0.2, 0.0, 10.0)
+    creature_status[loser] = np.clip(creature_status[loser] - 0.2, 0.0, 10.0)
     creature_score[winner] += 1.0
-    print(f"[creature {i}] challenged creature {j}: winner={winner}")
+    print(f"[creature {i}] fought creature {j}: winner={winner}, {outcome}")
 
-INTERACTION_MODES = {
-    "mug": {
-        "description": "steal gold from the weaker creature",
-        "precondition": lambda i, j: float(creature_traits[i, 5]) > 0.55 and int(creature_gold[j]) > 0,
-        "effect": _effect_mug,
-    },
-    "display": {
-        "description": "assert dominance through posturing",
-        "precondition": lambda i, j: float(creature_traits[i, 1]) > 0.5 and float(creature_traits[j, 1]) > 0.5,
-        "effect": _effect_display,
-    },
-    "yield": {
-        "description": "submit to the more powerful creature",
-        "precondition": lambda i, j: float(creature_status[i]) < float(creature_status[j]) and float(creature_traits[i, 4]) > 0.55,
-        "effect": _effect_yield,
-    },
-    "gift": {
-        "description": "transfer gold to gain social standing",
-        "precondition": lambda i, j: float(creature_traits[i, 1]) > 0.6 and int(creature_gold[i]) > 0,
-        "effect": _effect_gift,
-    },
-    "challenge": {
-        "description": "fight the other creature for dominance",
-        "precondition": lambda i, j: float(creature_traits[i, 5]) > 0.65,
-        "effect": _effect_challenge,
-    },
+INTERACTION_TYPES = {
+    "talk":  {"description": "exchange words, possibly friendly or hostile", "effect": _effect_talk},
+    "trade": {"description": "attempt to exchange gold for goodwill",        "effect": _effect_trade},
+    "fight": {"description": "physical contest for dominance",               "effect": _effect_fight},
 }
 
-def build_interaction_prompt(i, j):
-    eligible = [
-        (name, info["description"])
-        for name, info in INTERACTION_MODES.items()
-        if info["precondition"](i, j)
-    ]
-    if not eligible:
-        return None, []
-    options_text = "; ".join(f"{name}: {desc}" for name, desc in eligible)
+INTERACTION_CHANCE = getattr(settings, "INTERACTION_CHANCE", 0.4)
+
+def build_interaction_prompt(i, j, interaction_type):
+    desc = INTERACTION_TYPES[interaction_type]["description"]
     prompt = (
-        f"You are in a grid game simulation. "
-        f"Two creatures meet. "
+        f"You are narrating a grid world simulation. Two creatures meet and {desc}. "
         f"Creature {i}: hp={int(creature_hp[i])}, gold={int(creature_gold[i])}, "
         f"status={float(creature_status[i]):.2f}, "
         f"aggression={float(creature_traits[i, 5]):.2f}, "
         f"caution={float(creature_traits[i, 4]):.2f}. "
         f"Creature {j}: hp={int(creature_hp[j])}, gold={int(creature_gold[j])}, "
-        f"status={float(creature_status[j]):.2f}. "
-        f"Eligible interactions: {options_text}. "
-        f"Reply with exactly one interaction name from the list, nothing else."
+        f"status={float(creature_status[j]):.2f}, "
+        f"aggression={float(creature_traits[j, 5]):.2f}. "
+        f"Describe the outcome in one short sentence. It will be parsed for keywords."
+        f"Include the word 'success' if the interaction went well for creature {i}, "
+        f"or 'failure' if it went poorly. "
+        f"Include 'friendly' if the tone was positive."
     )
-    return prompt, [name for name, _ in eligible]
+    return prompt
 
 def handle_proximity_events(i):
     x, y = int(creature_x[i]), int(creature_y[i])
@@ -277,18 +239,25 @@ def handle_proximity_events(i):
     nearest_dist, j, ox, oy = others[0]
     if nearest_dist > 1:
         return
-    prompt, eligible_names = build_interaction_prompt(i, j)
-    if not eligible_names:
+    if random.random() > INTERACTION_CHANCE:
         return
-    if getattr(settings, "ENABLE_LLM_INTERACTIONS", True):
-        print(f"[interaction {i},{j}] prompt: {prompt}")
-        response = ask_llm(prompt).strip().lower()
-        chosen = next((name for name in eligible_names if name in response), eligible_names[0])
+    aggression = float(creature_traits[i, 5])
+    status_drive = float(creature_traits[i, 1])
+    if aggression > 0.6:
+        interaction_type = "fight"
+    elif status_drive > 0.5 and int(creature_gold[i]) > 0:
+        interaction_type = "trade"
     else:
-        chosen = eligible_names[0]
-    print(f"[interaction {i},{j}] mode: {chosen}")
-    creature_last_interaction[i] = chosen
-    INTERACTION_MODES[chosen]["effect"](i, j)
+        interaction_type = "talk"
+    creature_last_interaction[i] = interaction_type
+    if getattr(settings, "ENABLE_LLM_INTERACTIONS", True):
+        prompt = build_interaction_prompt(i, j, interaction_type)
+        print(f"[interaction {i},{j}] type={interaction_type} prompt: {prompt}")
+        outcome = ask_llm(prompt, 0).strip().lower()
+        print(f"[interaction {i},{j}] outcome: {outcome}")
+    else:
+        outcome = "success"
+    INTERACTION_TYPES[interaction_type]["effect"](i, j, outcome)
 
 def check_gold_pickup(i):
     pos = (int(creature_x[i]), int(creature_y[i]))
