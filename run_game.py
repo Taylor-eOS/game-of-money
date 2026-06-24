@@ -27,10 +27,10 @@ def draw_gold_shape(surf, grid_x, grid_y):
 def create_world_surface():
     surf = pygame.Surface((WIDTH, HEIGHT)).convert()
     surf.fill((255, 255, 255))
-    for block_x, block_y in world.world_blocks:
+    for block_x, block_y in world.world_state.blocks:
         pygame.draw.rect(surf, (100, 100, 100),
                          pygame.Rect(block_x * CELL_W, block_y * CELL_H, CELL_W, CELL_H))
-    for gx, gy in world.gold_positions:
+    for gx, gy in world.world_state.gold_positions:
         draw_gold_shape(surf, gx, gy)
     return surf
 
@@ -43,13 +43,13 @@ def status_to_color(status_val, max_status=10.0):
 
 def render_frame(screen, world_surf):
     screen.blit(world_surf, (0, 0))
-    n = len(game_logic.creature_x)
+    n = len(game_logic.creature_state.x)
     for i in range(n):
-        if not game_logic.creature_alive[i]:
+        if not game_logic.creature_state.alive[i]:
             continue
-        cx = int(game_logic.creature_x[i]) * CELL_W
-        cy = int(game_logic.creature_y[i]) * CELL_H
-        surf = sprites.create_creature_surface(CELL_W, CELL_H, game_logic.creature_shirt[i])
+        cx = int(game_logic.creature_state.x[i]) * CELL_W
+        cy = int(game_logic.creature_state.y[i]) * CELL_H
+        surf = sprites.create_creature_surface(CELL_W, CELL_H, game_logic.creature_state.shirt[i])
         screen.blit(surf, (cx, cy))
     pygame.display.flip()
 
@@ -73,3 +73,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
