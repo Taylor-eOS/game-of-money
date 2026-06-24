@@ -1,6 +1,7 @@
 import numpy as np
 import random
 import settings
+import world
 from gguf_llm_library import ask_llm
 
 creature_x = np.empty(0, dtype=np.int32)
@@ -13,75 +14,18 @@ creature_traits = np.empty((0, 6), dtype=np.float32)
 creature_last_action = []
 creature_last_interaction = []
 creature_score = np.empty(0, dtype=np.float32)
-world_blocks = set()
-world_areas = []
-world_visit = np.empty((0, 0), dtype=np.int32)
-gold_positions = set()
-gold_respawn_timer = {}
-
+creature_shirt = []
 TRAIT_NAMES = ("wealth_drive", "status_drive", "social_distance", "curiosity", "caution", "aggression")
 DIRECTIONS = ("north", "south", "east", "west")
 DIRECTION_DELTAS = {"north": (0, -1), "south": (0, 1), "east": (1, 0), "west": (-1, 0)}
 NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
-
-GOLD_COUNT = getattr(settings, "GOLD_COUNT", 12)
-GOLD_RESPAWN_TICKS = getattr(settings, "GOLD_RESPAWN_TICKS", 30)
 GENERATION_TICKS = getattr(settings, "GENERATION_TICKS", 200)
 STATUS_DECAY = getattr(settings, "STATUS_DECAY", 0.005)
 STATUS_RADIUS = getattr(settings, "STATUS_RADIUS", 6)
-
 _tick_counter = 0
 
 def init_world():
-    global world_blocks, world_areas, world_visit
-    world_blocks = set()
-    if hasattr(settings, "WALLS"):
-        for x1, y1, x2, y2 in settings.WALLS:
-            for x in range(min(x1, x2), max(x1, x2) + 1):
-                for y in range(min(y1, y2), max(y1, y2) + 1):
-                    world_blocks.add((x, y))
-    world_areas = []
-    if hasattr(settings, "AREAS"):
-        for x1, y1, x2, y2, name in settings.AREAS:
-            world_areas.append((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2), name))
-    world_visit = np.zeros((settings.ROWS, settings.COLS), dtype=np.int32)
-    spawn_gold(GOLD_COUNT)
-
-def is_blocked(x, y):
-    if x < 0 or y < 0 or x >= settings.COLS or y >= settings.ROWS:
-        return True
-    return (x, y) in world_blocks
-
-def get_area(x, y):
-    for x1, y1, x2, y2, name in world_areas:
-        if x1 <= x <= x2 and y1 <= y <= y2:
-            return name
-    return None
-
-def spawn_gold(count):
-    attempts = 0
-    while len(gold_positions) < count and attempts < count * 20:
-        x = random.randint(0, settings.COLS - 1)
-        y = random.randint(0, settings.ROWS - 1)
-        if not is_blocked(x, y) and (x, y) not in gold_positions:
-            gold_positions.add((x, y))
-        attempts += 1
-
-def tick_gold_respawn():
-    to_respawn = []
-    for pos, timer in list(gold_respawn_timer.items()):
-        gold_respawn_timer[pos] = timer - 1
-        if gold_respawn_timer[pos] <= 0:
-            to_respawn.append(pos)
-    for pos in to_respawn:
-        del gold_respawn_timer[pos]
-        if not is_blocked(*pos):
-            gold_positions.add(pos)
-
-def nearest_gold_distance(x, y):
-    if not gold_positions:
-        return max(settings.COLS, settings.ROWS)
-    return min(abs(gx - x) + abs(gy - y) for gx, gy in gold_positions)
+    world.init_world()
 
 def local_status_field(x, y):
     total = 0.0
@@ -91,9 +35,6 @@ def local_status_field(x, y):
         if 0 < dist <= STATUS_RADIUS:
             total += float(creature_status[j]) / dist
     return total
-
-def count_open_neighbors(x, y):
-    return sum(1 for dx, dy in NEIGHBOR_DELTAS if not is_blocked(x + dx, y + dy))
 
 def nearby_creatures(i, x, y):
     others = []
@@ -109,12 +50,12 @@ def nearby_creatures(i, x, y):
 def spawn_creatures(count):
     global creature_x, creature_y, creature_hp, creature_gold, creature_age
     global creature_status, creature_traits, creature_last_action
-    global creature_last_interaction, creature_score
+    global creature_last_interaction, creature_score, creature_shirt
     xs, ys = [], []
     while len(xs) < count:
         x = random.randint(0, settings.COLS - 1)
         y = random.randint(0, settings.ROWS - 1)
-        if not is_blocked(x, y):
+        if not world.is_blocked(x, y):
             xs.append(x)
             ys.append(y)
     creature_x = np.array(xs, dtype=np.int32)
@@ -127,9 +68,13 @@ def spawn_creatures(count):
     creature_last_action = [""] * count
     creature_last_interaction = [""] * count
     creature_score = np.zeros(count, dtype=np.float32)
+    creature_shirt = [
+        (random.randint(80, 220), random.randint(80, 220), random.randint(80, 220))
+        for _ in range(count)
+    ]
 
 def gold_field_delta(x, y, nx, ny):
-    return nearest_gold_distance(x, y) - nearest_gold_distance(nx, ny)
+    return world.nearest_gold_distance(x, y) - world.nearest_gold_distance(nx, ny)
 
 def status_field_delta(x, y, nx, ny):
     return local_status_field(nx, ny) - local_status_field(x, y)
@@ -140,10 +85,10 @@ def space_field_delta(x, y, nx, ny):
     return density_here - density_next
 
 def novelty_field_delta(x, y, nx, ny):
-    return int(world_visit[y, x]) - int(world_visit[ny, nx])
+    return int(world.world_visit[y, x]) - int(world.world_visit[ny, nx])
 
 def openness_field(nx, ny):
-    return count_open_neighbors(nx, ny) / 4.0
+    return world.count_open_neighbors(nx, ny) / 4.0
 
 def composite_field_value(i, nx, ny):
     x, y = int(creature_x[i]), int(creature_y[i])
@@ -168,7 +113,7 @@ def choose_move(i):
     best_cells = []
     for dx, dy in NEIGHBOR_DELTAS:
         nx, ny = x + dx, y + dy
-        if is_blocked(nx, ny):
+        if world.is_blocked(nx, ny):
             continue
         val = composite_field_value(i, nx, ny)
         if best_value is None or val > best_value:
@@ -253,7 +198,7 @@ def handle_proximity_events(i):
     if getattr(settings, "ENABLE_LLM_INTERACTIONS", True):
         prompt = build_interaction_prompt(i, j, interaction_type)
         print(f"[interaction {i},{j}] type={interaction_type} prompt: {prompt}")
-        outcome = ask_llm(prompt, 0).strip().lower()
+        outcome = ask_llm(prompt, settings.LLM_MODEL).strip().lower()
         print(f"[interaction {i},{j}] outcome: {outcome}")
     else:
         outcome = "success"
@@ -261,11 +206,11 @@ def handle_proximity_events(i):
 
 def check_gold_pickup(i):
     pos = (int(creature_x[i]), int(creature_y[i]))
-    if pos in gold_positions:
-        gold_positions.discard(pos)
+    if pos in world.gold_positions:
+        world.gold_positions.discard(pos)
         creature_gold[i] += 1
         creature_status[i] = np.clip(creature_status[i] + 1.0, 0.0, 10.0)
-        gold_respawn_timer[pos] = GOLD_RESPAWN_TICKS
+        world.gold_respawn_timer[pos] = world.GOLD_RESPAWN_TICKS
         creature_score[i] += 2.0
         print(f"[creature {i}] picked up gold at {pos}, total={int(creature_gold[i])}")
 
@@ -315,7 +260,7 @@ def update_creature(i):
     if moved:
         creature_x[i] = nx
         creature_y[i] = ny
-        world_visit[ny, nx] += 1
+        world.world_visit[ny, nx] += 1
     creature_last_action[i] = f"({nx},{ny})"
     creature_age[i] += 1
     check_gold_pickup(i)
@@ -325,7 +270,7 @@ def update_creature(i):
 
 def update_creatures():
     global _tick_counter
-    tick_gold_respawn()
+    world.tick_gold_respawn()
     tick_status_decay()
     for i in range(len(creature_x)):
         update_creature(i)

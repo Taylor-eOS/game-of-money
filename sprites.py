@@ -1,17 +1,12 @@
 import pygame
 import random
-from settings import SCALE, GOLD_SHAPE
-
-GOLD_COLOR = (255, 215, 0)
-CELL_W = SCALE
-CELL_H = SCALE
 
 def random_shirt_color():
     return (random.randint(80, 220), random.randint(80, 220), random.randint(80, 220))
 
-def create_creature_surfaces(CELL_W, CELL_H, shirt=(170, 70, 70)):
+def create_creature_surface(cell_w, cell_h, shirt=(170, 70, 70)):
     scale = 4
-    W, H = CELL_W * scale, CELL_H * scale
+    W, H = cell_w * scale, cell_h * scale
     surf = pygame.Surface((W, H), pygame.SRCALPHA)
     skin = (245, 205, 135)
     dark = (35, 25, 15)
@@ -29,18 +24,4 @@ def create_creature_surfaces(CELL_W, CELL_H, shirt=(170, 70, 70)):
     eye_y = hcy - int(head_h * 0.05)
     pygame.draw.rect(surf, dark, (hcx - int(head_w * 0.22), eye_y, 2, 2))
     pygame.draw.rect(surf, dark, (hcx + int(head_w * 0.22) - 2, eye_y, 2, 2))
-    return pygame.transform.scale(surf, (CELL_W, CELL_H)).convert_alpha()
-
-def build_blit_list(CELL_W, CELL_H, creature_x, creature_y):
-    return [[create_creature_surfaces(CELL_W, CELL_H, random_shirt_color()),
-             pygame.Rect(int(creature_x[i]) * CELL_W,
-                         int(creature_y[i]) * CELL_H,
-                         CELL_W, CELL_H)]
-            for i in range(len(creature_x))]
-
-def create_gold_shape(surf, grid_x, grid_y):
-    center_x = grid_x * CELL_W + CELL_W // 2
-    center_y = grid_y * CELL_H + CELL_H // 2
-    radius = min(CELL_W, CELL_H) // GOLD_SHAPE
-    pygame.draw.circle(surf, GOLD_COLOR, (center_x, center_y), radius)
-
+    return pygame.transform.scale(surf, (cell_w, cell_h)).convert_alpha()
