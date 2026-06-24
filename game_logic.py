@@ -129,21 +129,28 @@ def choose_move(i):
         return x, y
     return random.choice(best_cells)
 
-def _effect_talk(i, j, outcome):
-    boost = 0.1 if "friendly" in outcome or "positive" in outcome else 0.0
-    creature_status[i] = np.clip(creature_status[i] + boost, 0.0, 10.0)
-    creature_score[i] += 0.2
-    print(f"[creature {i}] talked to creature {j}: {outcome}")
+def _effect_talk(i, j):
+    aggression_i = float(creature_traits[i, 5])
+    social_i = 1.0 - float(creature_traits[i, 2])
+    friendly = random.random() < (social_i * (1.0 - aggression_i))
+    if friendly:
+        creature_status[i] = np.clip(creature_status[i] + 0.1, 0.0, 10.0)
+        creature_score[i] += 0.2
+    return "friendly" if friendly else "hostile"
 
-def _effect_trade(i, j, outcome):
-    if "success" in outcome and int(creature_gold[i]) > 0:
+def _effect_trade(i, j):
+    if int(creature_gold[i]) <= 0:
+        return "failure"
+    wealth_drive_j = float(creature_traits[j, 0])
+    success = random.random() < wealth_drive_j
+    if success:
         creature_gold[i] -= 1
         creature_gold[j] += 1
         creature_status[i] = np.clip(creature_status[i] + 0.2, 0.0, 10.0)
         creature_score[i] += 0.5
-    print(f"[creature {i}] traded with creature {j}: {outcome}")
+    return "success" if success else "failure"
 
-def _effect_fight(i, j, outcome):
+def _effect_fight(i, j):
     power_i = float(creature_status[i]) + float(creature_traits[i, 5]) + random.random()
     power_j = float(creature_status[j]) + float(creature_traits[j, 5]) + random.random()
     winner = i if power_i >= power_j else j
@@ -151,21 +158,18 @@ def _effect_fight(i, j, outcome):
     creature_hp[loser] = max(0, int(creature_hp[loser]) - random.randint(5, 20))
     if creature_hp[loser] == 0:
         creature_alive[loser] = False
-        print(f"[creature {loser}] died in combat with creature {winner}")
     creature_status[winner] = np.clip(creature_status[winner] + 0.4, 0.0, 10.0)
     creature_status[loser] = np.clip(creature_status[loser] - 0.2, 0.0, 10.0)
     creature_score[winner] += 1.0
-    print(f"[creature {i}] fought creature {j}: winner={winner}, {outcome}")
+    return f"winner={winner}"
 
 INTERACTION_TYPES = {
-    "talk":  {"description": "exchange words, possibly friendly or hostile", "effect": _effect_talk},
-    "trade": {"description": "attempt to exchange gold for goodwill",        "effect": _effect_trade},
-    "fight": {"description": "physical contest for dominance",               "effect": _effect_fight},
+    "talk":  {"description": "exchange words, friendly or hostile", "effect": _effect_talk},
+    "trade": {"description": "attempt to exchange gold for goodwill", "effect": _effect_trade},
+    "fight": {"description": "physical contest for dominance",       "effect": _effect_fight},
 }
 
-INTERACTION_CHANCE = getattr(settings, "INTERACTION_CHANCE", 0.4)
-
-def build_interaction_prompt(i, j, interaction_type):
+def build_interaction_prompt(i, j, interaction_type, outcome):
     desc = INTERACTION_TYPES[interaction_type]["description"]
     prompt = (
         f"You are narrating a grid world simulation. Two creatures meet and {desc}. "
@@ -176,12 +180,12 @@ def build_interaction_prompt(i, j, interaction_type):
         f"Creature {j}: hp={int(creature_hp[j])}, gold={int(creature_gold[j])}, "
         f"status={float(creature_status[j]):.2f}, "
         f"aggression={float(creature_traits[j, 5]):.2f}. "
-        f"Describe the outcome in one short sentence. It will be parsed for keywords."
-        f"Include the word 'success' if the interaction went well for creature {i}, "
-        f"or 'failure' if it went poorly. "
-        f"Include 'friendly' if the tone was positive."
+        f"The outcome was: {outcome}. "
+        f"Describe what happened in one short vivid sentence."
     )
     return prompt
+
+INTERACTION_CHANCE = getattr(settings, "INTERACTION_CHANCE", 0.4)
 
 def handle_proximity_events(i):
     x, y = int(creature_x[i]), int(creature_y[i])
@@ -202,14 +206,14 @@ def handle_proximity_events(i):
     else:
         interaction_type = "talk"
     creature_last_interaction[i] = interaction_type
+    outcome = INTERACTION_TYPES[interaction_type]["effect"](i, j)
     if getattr(settings, "ENABLE_LLM_INTERACTIONS", True):
-        prompt = build_interaction_prompt(i, j, interaction_type)
+        prompt = build_interaction_prompt(i, j, interaction_type, outcome)
         print(f"[interaction {i},{j}] type={interaction_type} prompt: {prompt}")
-        outcome = ask_llm(prompt, settings.LLM_MODEL).strip().lower()
-        print(f"[interaction {i},{j}] outcome: {outcome}")
+        flavor = ask_llm(prompt, settings.LLM_MODEL).strip()
+        print(f"[interaction {i},{j}] flavor: {flavor}")
     else:
-        outcome = "success"
-    INTERACTION_TYPES[interaction_type]["effect"](i, j, outcome)
+        print(f"[interaction {i},{j}] type={interaction_type} outcome: {outcome}")
 
 def check_gold_pickup(i):
     pos = (int(creature_x[i]), int(creature_y[i]))
@@ -260,7 +264,7 @@ def apply_generational_nudge():
     creature_score[:] = 0.0
     print(f"[generation] nudged toward creature {best_i}: {best_traits.tolist()}")
 
-def update_creature(i):
+def update_creature_move(i):
     x, y = int(creature_x[i]), int(creature_y[i])
     nx, ny = choose_move(i)
     moved = (nx != x or ny != y)
@@ -271,9 +275,11 @@ def update_creature(i):
     creature_last_action[i] = f"({nx},{ny})"
     creature_age[i] += 1
     check_gold_pickup(i)
-    handle_proximity_events(i)
     accumulate_survival_score(i)
     apply_personality_feedback(i, moved, nx, ny)
+
+def update_creature_interact(i):
+    handle_proximity_events(i)
 
 def update_creatures():
     global _tick_counter
@@ -281,7 +287,11 @@ def update_creatures():
     tick_status_decay()
     for i in range(len(creature_x)):
         if creature_alive[i]:
-            update_creature(i)
+            update_creature_move(i)
+    for i in range(len(creature_x)):
+        if creature_alive[i]:
+            update_creature_interact(i)
     _tick_counter += 1
     if _tick_counter % GENERATION_TICKS == 0:
         apply_generational_nudge()
+

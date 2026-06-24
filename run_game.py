@@ -20,8 +20,9 @@ def init_display():
 def draw_gold_shape(surf, grid_x, grid_y):
     center_x = grid_x * CELL_W + CELL_W // 2
     center_y = grid_y * CELL_H + CELL_H // 2
-    radius = min(CELL_W, CELL_H) // settings.GOLD_SHAPE
-    pygame.draw.circle(surf, GOLD_COLOR, (center_x, center_y), radius)
+    radius = min(CELL_W, CELL_H) // settings.GOLD_SMALLNESS
+    points = [(center_x, center_y - radius), (center_x + radius, center_y), (center_x, center_y + radius), (center_x - radius, center_y)]
+    pygame.draw.polygon(surf, GOLD_COLOR, points)
 
 def create_world_surface():
     surf = pygame.Surface((WIDTH, HEIGHT)).convert()
