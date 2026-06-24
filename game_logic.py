@@ -113,13 +113,14 @@ def composite_field_value(i, nx, ny):
 
 def choose_move(i):
     x, y = int(creature_x[i]), int(creature_y[i])
+    target = choose_target(i)
     best_value = None
     best_cells = []
     for dx, dy in NEIGHBOR_DELTAS:
         nx, ny = x + dx, y + dy
         if world.is_blocked(nx, ny):
             continue
-        val = composite_field_value(i, nx, ny)
+        val = target_field_value(i, target, nx, ny)
         if best_value is None or val > best_value:
             best_value = val
             best_cells = [(nx, ny)]
@@ -128,6 +129,32 @@ def choose_move(i):
     if not best_cells:
         return x, y
     return random.choice(best_cells)
+
+def choose_target(i):
+    return {"type": "composite"}
+
+def composite_field_value(i, nx, ny):
+    x, y = int(creature_x[i]), int(creature_y[i])
+    t = creature_traits[i]
+    wealth_drive = float(t[0])
+    status_drive = float(t[1])
+    social_distance = float(t[2])
+    curiosity = float(t[3])
+    caution = float(t[4])
+    value = (
+        wealth_drive * gold_field_delta(x, y, nx, ny) +
+        status_drive * status_field_delta(x, y, nx, ny) +
+        social_distance * space_field_delta(x, y, nx, ny) +
+        curiosity * novelty_field_delta(x, y, nx, ny) +
+        caution * openness_field(nx, ny)
+    )
+    return value
+
+def target_field_value(i, target, nx, ny):
+    target_type = target["type"]
+    if target_type == "composite":
+        return composite_field_value(i, nx, ny)
+    return 0.0
 
 def _effect_talk(i, j):
     aggression_i = float(creature_traits[i, 5])
