@@ -12,6 +12,8 @@ WIDTH = settings.COLS * CELL_W
 HEIGHT = settings.ROWS * CELL_H
 GOLD_COLOR = (255, 215, 0)
 
+creature_surfaces = []
+
 def init_display():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Game of Money")
@@ -34,13 +36,6 @@ def create_world_surface():
         draw_gold_shape(surf, gx, gy)
     return surf
 
-def status_to_color(status_val, max_status=10.0):
-    t = min(float(status_val) / max_status, 1.0)
-    r = int(50  + (205 * t))
-    g = int(200 - (150 * t))
-    b = int(50)
-    return (r, g, b)
-
 def render_frame(screen, world_surf):
     screen.blit(world_surf, (0, 0))
     n = len(game_logic.creature_state.x)
@@ -49,8 +44,7 @@ def render_frame(screen, world_surf):
             continue
         cx = int(game_logic.creature_state.x[i]) * CELL_W
         cy = int(game_logic.creature_state.y[i]) * CELL_H
-        surf = sprites.create_creature_surface(CELL_W, CELL_H, game_logic.creature_state.shirt[i])
-        screen.blit(surf, (cx, cy))
+        screen.blit(creature_surfaces[i], (cx, cy))
     pygame.display.flip()
 
 def handle_events():
@@ -61,8 +55,9 @@ def handle_events():
 
 def main():
     screen = init_display()
-    game_logic.init_world()
-    game_logic.spawn_creatures(settings.CREATURE_COUNT)
+    world.init_world()
+    game_logic.create_creatures(settings.CREATURE_COUNT)
+    creature_surfaces.extend(sprites.bake_creature_surfaces(game_logic.creature_state.shirt))
     clock = pygame.time.Clock()
     while True:
         handle_events()
@@ -73,4 +68,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

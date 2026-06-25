@@ -10,12 +10,16 @@ class WorldState:
     visit: np.ndarray = field(default_factory=lambda: np.empty((0, 0), dtype=np.int32))
     gold_positions: set = field(default_factory=set)
     gold_respawn_timer: dict = field(default_factory=dict)
+    tick_counter: int = 0
 
-world_state = None
+world_state = WorldState()
 
 def init_world():
-    global world_state
-    world_state = WorldState()
+    world_state.blocks = set()
+    world_state.areas = []
+    world_state.gold_positions = set()
+    world_state.gold_respawn_timer = {}
+    world_state.tick_counter = 0
     if hasattr(settings, "WALLS"):
         for x1, y1, x2, y2 in settings.WALLS:
             for x in range(min(x1, x2), max(x1, x2) + 1):
@@ -31,12 +35,6 @@ def is_blocked(x, y):
     if x < 0 or y < 0 or x >= settings.COLS or y >= settings.ROWS:
         return True
     return (x, y) in world_state.blocks
-
-def get_area(x, y):
-    for x1, y1, x2, y2, name in world_state.areas:
-        if x1 <= x <= x2 and y1 <= y <= y2:
-            return name
-    return None
 
 def spawn_gold(count):
     attempts = 0
@@ -58,11 +56,3 @@ def tick_gold_respawn():
         if not is_blocked(*pos):
             world_state.gold_positions.add(pos)
 
-def nearest_gold_distance(x, y):
-    if not world_state.gold_positions:
-        return max(settings.COLS, settings.ROWS)
-    return min(abs(gx - x) + abs(gy - y) for gx, gy in world_state.gold_positions)
-
-def count_open_neighbors(x, y):
-    NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
-    return sum(1 for dx, dy in NEIGHBOR_DELTAS if not is_blocked(x + dx, y + dy))

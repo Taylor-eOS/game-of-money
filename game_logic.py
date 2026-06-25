@@ -12,7 +12,6 @@ class CreatureState:
     y: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     hp: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     gold: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
-    age: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     traits: np.ndarray = field(default_factory=lambda: np.empty((0, settings.LATENT_DIM), dtype=np.float32))
     score: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
     alive: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.bool_))
@@ -20,13 +19,9 @@ class CreatureState:
     last_interaction: list = field(default_factory=list)
     shirt: list = field(default_factory=list)
     target: list = field(default_factory=list)
-    tick_counter: int = 0
 
-creature_state = None
+creature_state = CreatureState()
 NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
-
-def init_world():
-    world.init_world()
 
 def nearby_creatures(i, x, y):
     others = []
@@ -39,9 +34,7 @@ def nearby_creatures(i, x, y):
     others.sort(key=lambda item: item[0])
     return others
 
-def spawn_creatures(count):
-    global creature_state
-    creature_state = CreatureState()
+def create_creatures(count):
     xs, ys = [], []
     while len(xs) < count:
         x = random.randint(0, settings.COLS - 1)
@@ -53,7 +46,6 @@ def spawn_creatures(count):
     creature_state.y = np.array(ys, dtype=np.int32)
     creature_state.hp = np.full(count, 100, dtype=np.int32)
     creature_state.gold = np.zeros(count, dtype=np.int32)
-    creature_state.age = np.zeros(count, dtype=np.int32)
     creature_state.traits = np.random.uniform(0.0, 1.0, size=(count, settings.LATENT_DIM)).astype(np.float32)
     creature_state.last_action = [""] * count
     creature_state.last_interaction = [""] * count
@@ -208,7 +200,7 @@ def handle_proximity_events(i):
     nearest_dist, j, ox, oy = others[0]
     if nearest_dist > 1:
         return
-    if random.random() > settings.INTERACTION_CHANCE:
+    if random.random() < settings.INTERACTION_CHANCE:
         return
     interaction_type = random.choice(list(INTERACTION_TYPES.keys()))
     creature_state.last_interaction[i] = interaction_type
@@ -234,9 +226,6 @@ def check_gold_pickup(i):
 
 def accumulate_survival_score(i):
     creature_state.score[i] += (int(creature_state.hp[i]) / 100.0) * 0.1 + int(creature_state.gold[i]) * 0.05
-
-def apply_personality_feedback(i, moved, nx, ny):
-    pass
 
 def apply_generational_nudge():
     alive_indices = [i for i in range(len(creature_state.x)) if creature_state.alive[i]]
@@ -264,10 +253,8 @@ def update_creature_move(i):
         creature_state.y[i] = ny
         world.world_state.visit[ny, nx] += 1
     creature_state.last_action[i] = f"({nx},{ny})"
-    creature_state.age[i] += 1
     check_gold_pickup(i)
     accumulate_survival_score(i)
-    apply_personality_feedback(i, moved, nx, ny)
 
 def update_creature_interact(i):
     handle_proximity_events(i)
@@ -280,6 +267,6 @@ def update_creatures():
     for i in range(len(creature_state.x)):
         if creature_state.alive[i]:
             update_creature_interact(i)
-    creature_state.tick_counter += 1
-    if creature_state.tick_counter % settings.GENERATION_TICKS == 0:
+    world.world_state.tick_counter += 1
+    if world.world_state.tick_counter % settings.GENERATION_TICKS == 0:
         apply_generational_nudge()
