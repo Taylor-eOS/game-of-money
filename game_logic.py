@@ -147,6 +147,11 @@ def _path_still_valid(i):
     nx, ny = path[0]
     return not world.is_blocked(nx, ny)
 
+def _cell_occupied(x, y):
+    occupied = set(zip(creature_state.x[creature_state.alive].tolist(),
+                       creature_state.y[creature_state.alive].tolist()))
+    return (x, y) in occupied
+
 def choose_move(i):
     x, y = int(creature_state.x[i]), int(creature_state.y[i])
     target = creature_state.target[i]
@@ -170,11 +175,14 @@ def choose_move(i):
     if not _path_still_valid(i):
         creature_state.path[i] = astar(x, y, tx, ty)
     if creature_state.path[i]:
-        nx, ny = creature_state.path[i].pop(0)
-        return nx, ny
+        nx, ny = creature_state.path[i][0]
+        if not _cell_occupied(nx, ny) or (nx == tx and ny == ty):
+            creature_state.path[i].pop(0)
+            return nx, ny
+        creature_state.path[i] = []
     for dx, dy in random.sample(list(NEIGHBOR_DELTAS), len(NEIGHBOR_DELTAS)):
         nx, ny = x + dx, y + dy
-        if not world.is_blocked(nx, ny):
+        if not world.is_blocked(nx, ny) and not _cell_occupied(nx, ny):
             return nx, ny
     return x, y
 
