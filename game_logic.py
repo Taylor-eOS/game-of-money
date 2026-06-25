@@ -13,8 +13,7 @@ class CreatureState:
     hp: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     gold: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     age: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
-    status: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
-    traits: np.ndarray = field(default_factory=lambda: np.empty((0, 6), dtype=np.float32))
+    traits: np.ndarray = field(default_factory=lambda: np.empty((0, settings.LATENT_DIM), dtype=np.float32))
     score: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
     alive: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.bool_))
     last_action: list = field(default_factory=list)
@@ -25,22 +24,10 @@ class CreatureState:
     tick_counter: int = 0
 
 creature_state = None
-TRAIT_NAMES = ("wealth_drive", "status_drive", "social_distance", "curiosity", "caution", "aggression")
 NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
 
 def init_world():
     world.init_world()
-
-def local_status_field(x, y):
-    total = 0.0
-    for j in range(len(creature_state.x)):
-        if not creature_state.alive[j]:
-            continue
-        ox, oy = int(creature_state.x[j]), int(creature_state.y[j])
-        dist = abs(ox - x) + abs(oy - y)
-        if 0 < dist <= settings.STATUS_RADIUS:
-            total += float(creature_state.status[j]) / dist
-    return total
 
 def nearby_creatures(i, x, y):
     others = []
@@ -68,8 +55,7 @@ def spawn_creatures(count):
     creature_state.hp = np.full(count, 100, dtype=np.int32)
     creature_state.gold = np.zeros(count, dtype=np.int32)
     creature_state.age = np.zeros(count, dtype=np.int32)
-    creature_state.status = np.zeros(count, dtype=np.float32)
-    creature_state.traits = np.random.uniform(0.25, 0.75, size=(count, len(TRAIT_NAMES))).astype(np.float32)
+    creature_state.traits = np.random.uniform(0.0, 1.0, size=(count, settings.LATENT_DIM)).astype(np.float32)
     creature_state.last_action = [""] * count
     creature_state.last_interaction = [""] * count
     creature_state.score = np.zeros(count, dtype=np.float32)
@@ -176,7 +162,7 @@ def choose_move(i):
         creature_state.path[i] = []
         return x, y
     if x == tx and y == ty:
-        creature_target[i] = None
+        creature_state.target[i] = None
         creature_state.path[i] = []
         return x, y
     if target["type"] == "creature":
@@ -193,58 +179,38 @@ def choose_move(i):
     return x, y
 
 def _effect_talk(i, j):
-    aggression_i = float(creature_state.traits[i, 5])
-    social_i = 1.0 - float(creature_state.traits[i, 2])
-    friendly = random.random() < (social_i * (1.0 - aggression_i))
-    if friendly:
-        creature_state.status[i] = np.clip(creature_state.status[i] + 0.1, 0.0, 10.0)
-        creature_state.score[i] += 0.2
-    return "friendly" if friendly else "hostile"
+    creature_state.score[i] += 0.1
+    return "talk"
 
 def _effect_trade(i, j):
     if int(creature_state.gold[i]) <= 0:
         return "failure"
-    wealth_drive_j = float(creature_state.traits[j, 0])
-    success = random.random() < wealth_drive_j
-    if success:
-        creature_state.gold[i] -= 1
-        creature_state.gold[j] += 1
-        creature_state.status[i] = np.clip(creature_state.status[i] + 0.2, 0.0, 10.0)
-        creature_state.score[i] += 0.5
-    return "success" if success else "failure"
+    creature_state.gold[i] -= 1
+    creature_state.gold[j] += 1
+    creature_state.score[i] += 0.3
+    return "success"
 
 def _effect_fight(i, j):
-    power_i = float(creature_state.status[i]) + float(creature_state.traits[i, 5]) + random.random()
-    power_j = float(creature_state.status[j]) + float(creature_state.traits[j, 5]) + random.random()
+    power_i = float(creature_state.traits[i, 0]) + random.random()
+    power_j = float(creature_state.traits[j, 0]) + random.random()
     winner = i if power_i >= power_j else j
     loser = j if winner == i else i
     creature_state.hp[loser] = max(0, int(creature_state.hp[loser]) - random.randint(5, 20))
     if creature_state.hp[loser] == 0:
         creature_state.alive[loser] = False
-    creature_state.status[winner] = np.clip(creature_state.status[winner] + 0.4, 0.0, 10.0)
-    creature_state.status[loser] = np.clip(creature_state.status[loser] - 0.2, 0.0, 10.0)
-    creature_state.score[winner] += 1.0
+    creature_state.score[winner] += 0.5
     return f"winner={winner}"
 
 INTERACTION_TYPES = {
-    "talk":  {"description": "exchange words, friendly or hostile", "effect": _effect_talk},
-    "trade": {"description": "attempt to exchange gold for goodwill", "effect": _effect_trade},
-    "fight": {"description": "physical contest for dominance",       "effect": _effect_fight},
+    "talk":  {"description": "are in proximity", "effect": _effect_talk},
+    "trade": {"description": "exchange a resource",  "effect": _effect_trade},
+    "fight": {"description": "contest physically",   "effect": _effect_fight},
 }
 
 def build_interaction_prompt(i, j, interaction_type, outcome):
     desc = INTERACTION_TYPES[interaction_type]["description"]
     prompt = (
         f"Two creatures meet and {desc} in a grid world simulation. "
-        f"Creature {i}: hp={int(creature_state.hp[i])}, gold={int(creature_state.gold[i])}, "
-        f"status={float(creature_state.status[i]):.2f}, "
-        f"aggression={float(creature_state.traits[i, 5]):.2f}, "
-        f"caution={float(creature_state.traits[i, 4]):.2f}. "
-        f"Creature {j}: hp={int(creature_state.hp[j])}, gold={int(creature_state.gold[j])}, "
-        f"status={float(creature_state.status[j]):.2f}, "
-        f"aggression={float(creature_state.traits[j, 5]):.2f}. "
-        f"The outcome was: {outcome}. "
-        f"Describe what happened in one short vivid sentence."
     )
     return prompt
 
@@ -258,14 +224,7 @@ def handle_proximity_events(i):
         return
     if random.random() > settings.INTERACTION_CHANCE:
         return
-    aggression = float(creature_state.traits[i, 5])
-    status_drive = float(creature_state.traits[i, 1])
-    if aggression > 0.6:
-        interaction_type = "fight"
-    elif status_drive > 0.5 and int(creature_state.gold[i]) > 0:
-        interaction_type = "trade"
-    else:
-        interaction_type = "talk"
+    interaction_type = random.choice(list(INTERACTION_TYPES.keys()))
     creature_state.last_interaction[i] = interaction_type
     outcome = INTERACTION_TYPES[interaction_type]["effect"](i, j)
     if settings.ENABLE_LLM_INTERACTIONS:
@@ -281,7 +240,6 @@ def check_gold_pickup(i):
     if pos in world.world_state.gold_positions:
         world.world_state.gold_positions.discard(pos)
         creature_state.gold[i] += 1
-        creature_state.status[i] = np.clip(creature_state.status[i] + 1.0, 0.0, 10.0)
         world.world_state.gold_respawn_timer[pos] = settings.GOLD_RESPAWN_TICKS
         creature_state.score[i] += 2.0
         if creature_state.target[i] is not None and creature_state.target[i].get("pos") == pos:
@@ -291,10 +249,6 @@ def check_gold_pickup(i):
 
 def accumulate_survival_score(i):
     creature_state.score[i] += (int(creature_state.hp[i]) / 100.0) * 0.1 + int(creature_state.gold[i]) * 0.05
-    creature_state.status[i] = np.clip(creature_state.status[i] + 0.01, 0.0, 10.0)
-
-def tick_status_decay():
-    creature_state.status = np.clip(creature_state.status - settings.STATUS_DECAY, 0.0, 10.0)
 
 def apply_personality_feedback(i, moved, nx, ny):
     pass
@@ -335,7 +289,6 @@ def update_creature_interact(i):
 
 def update_creatures():
     world.tick_gold_respawn()
-    tick_status_decay()
     for i in range(len(creature_state.x)):
         if creature_state.alive[i]:
             update_creature_move(i)
