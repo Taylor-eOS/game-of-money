@@ -20,7 +20,6 @@ class CreatureState:
     last_interaction: list = field(default_factory=list)
     shirt: list = field(default_factory=list)
     target: list = field(default_factory=list)
-    path: list = field(default_factory=list)
     tick_counter: int = 0
 
 creature_state = None
@@ -62,13 +61,13 @@ def spawn_creatures(count):
     creature_state.alive = np.ones(count, dtype=np.bool_)
     creature_state.shirt = [(random.randint(80, 220), random.randint(80, 220), random.randint(80, 220)) for _ in range(count)]
     creature_state.target = [None] * count
-    creature_state.path = [[] for _ in range(count)]
 
-def astar(sx, sy, gx, gy):
+def _astar_first_step(sx, sy, gx, gy, extra_blocked=None):
     if world.is_blocked(gx, gy):
-        return []
+        return None
     if sx == gx and sy == gy:
-        return []
+        return None
+    blocked = extra_blocked or set()
     open_heap = []
     heapq.heappush(open_heap, (0, sx, sy))
     came_from = {}
@@ -80,24 +79,21 @@ def astar(sx, sy, gx, gy):
         _, cx, cy = heapq.heappop(open_heap)
         nodes_expanded += 1
         if cx == gx and cy == gy:
-            path = []
             cur = (cx, cy)
-            while cur in came_from:
-                path.append(cur)
+            while came_from.get(cur) != (sx, sy) and cur in came_from:
                 cur = came_from[cur]
-            path.reverse()
-            return path
+            return cur
         for dx, dy in NEIGHBOR_DELTAS:
             nx, ny = cx + dx, cy + dy
-            if world.is_blocked(nx, ny):
+            if world.is_blocked(nx, ny) or (nx, ny) in blocked:
                 continue
             tentative_g = g_score[(cx, cy)] + 1
-            if tentative_g < g_score.get((nx, ny), float("inf")):
+            if tentative_g < g_score.get((nx, ny), float('inf')):
                 came_from[(nx, ny)] = (cx, cy)
                 g_score[(nx, ny)] = tentative_g
                 f = tentative_g + abs(nx - gx) + abs(ny - gy)
                 heapq.heappush(open_heap, (f, nx, ny))
-    return []
+    return None
 
 def _random_open_cell():
     for _ in range(200):
@@ -140,49 +136,31 @@ def _target_still_valid(i, target):
         return j < len(creature_state.x) and creature_state.alive[j]
     return False
 
-def _path_still_valid(i):
-    path = creature_state.path[i]
-    if not path:
-        return False
-    nx, ny = path[0]
-    return not world.is_blocked(nx, ny)
-
-def _cell_occupied(x, y):
-    occupied = set(zip(creature_state.x[creature_state.alive].tolist(),
-                       creature_state.y[creature_state.alive].tolist()))
-    return (x, y) in occupied
-
 def choose_move(i):
     x, y = int(creature_state.x[i]), int(creature_state.y[i])
     target = creature_state.target[i]
     if not _target_still_valid(i, target):
         target = select_target(i)
         creature_state.target[i] = target
-        creature_state.path[i] = []
     if target is None:
         return x, y
     tx, ty = _target_position(i, target)
     if tx is None:
         creature_state.target[i] = None
-        creature_state.path[i] = []
         return x, y
     if x == tx and y == ty:
         creature_state.target[i] = None
-        creature_state.path[i] = []
         return x, y
-    if target["type"] == "creature":
-        creature_state.path[i] = []
-    if not _path_still_valid(i):
-        creature_state.path[i] = astar(x, y, tx, ty)
-    if creature_state.path[i]:
-        nx, ny = creature_state.path[i][0]
-        if not _cell_occupied(nx, ny) or (nx == tx and ny == ty):
-            creature_state.path[i].pop(0)
-            return nx, ny
-        creature_state.path[i] = []
+    occupied = set(zip(creature_state.x[creature_state.alive].tolist(),
+                       creature_state.y[creature_state.alive].tolist()))
+    occupied.discard((x, y))
+    occupied.discard((tx, ty))
+    step = _astar_first_step(x, y, tx, ty, extra_blocked=occupied)
+    if step is not None:
+        return step
     for dx, dy in random.sample(list(NEIGHBOR_DELTAS), len(NEIGHBOR_DELTAS)):
         nx, ny = x + dx, y + dy
-        if not world.is_blocked(nx, ny) and not _cell_occupied(nx, ny):
+        if not world.is_blocked(nx, ny) and (nx, ny) not in occupied:
             return nx, ny
     return x, y
 
@@ -252,7 +230,6 @@ def check_gold_pickup(i):
         creature_state.score[i] += 2.0
         if creature_state.target[i] is not None and creature_state.target[i].get("pos") == pos:
             creature_state.target[i] = None
-            creature_state.path[i] = []
         print(f"[creature {i}] picked up gold at {pos}, total={int(creature_state.gold[i])}")
 
 def accumulate_survival_score(i):
