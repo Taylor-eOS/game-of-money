@@ -14,10 +14,11 @@ _head_size = 0.34
 _head_height = 0.3
 _eye_distance = 0.3
 _eye_height = 0.1
-_dead_tilt = 70
+_shirt_colors = np.empty((0, 3), dtype=np.uint8)
+_death_angle_from = 40
+_death_angle_to = 100
 creature_surfaces = []
 dead_surfaces = []
-_shirt_colors = np.empty((0, 3), dtype=np.uint8)
 
 def _make_surface(shirt, skin_color):
     W, H = _cell_w, _cell_h
@@ -43,14 +44,13 @@ def bake_creature_surfaces(count):
     global _shirt_colors
     creature_surfaces.clear()
     dead_surfaces.clear()
-    _shirt_colors = np.array(
-        [(random.randint(80, 220), random.randint(80, 220), random.randint(80, 220)) for _ in range(count)],
-        dtype=np.uint8,
-    )
+    _shirt_colors = np.array([(random.randint(80, 220), random.randint(80, 220), random.randint(80, 220)) for _ in range(count)], dtype=np.uint8,)
     for i in range(count):
         shirt = tuple(int(c) for c in _shirt_colors[i])
         skin_v = random.randint(-_skin_variation, _skin_variation)
         skin_color = tuple(max(0, min(255, c + skin_v)) for c in _skin_color_base)
         alive_surf = _make_surface(shirt, skin_color)
         creature_surfaces.append(alive_surf)
-        dead_surfaces.append(pygame.transform.rotate(alive_surf, _dead_tilt).convert_alpha())
+        angle = random.randint(_death_angle_from, _death_angle_to) * random.choice([1, -1])
+        dead_surfaces.append(pygame.transform.rotate(alive_surf, angle).convert_alpha())
+
