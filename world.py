@@ -9,7 +9,6 @@ class WorldState:
     areas: list = field(default_factory=list)
     visit: np.ndarray = field(default_factory=lambda: np.empty((0, 0), dtype=np.int32))
     gold_positions: set = field(default_factory=set)
-    gold_respawn_timer: dict = field(default_factory=dict)
     tick_counter: int = 0
 
 world_state = WorldState()
@@ -18,7 +17,6 @@ def init_world():
     world_state.blocks = set()
     world_state.areas = []
     world_state.gold_positions = set()
-    world_state.gold_respawn_timer = {}
     world_state.tick_counter = 0
     if hasattr(settings, "WALLS"):
         for x1, y1, x2, y2 in settings.WALLS:
@@ -45,14 +43,6 @@ def spawn_gold(count):
             world_state.gold_positions.add((x, y))
         attempts += 1
 
-def tick_gold_respawn():
-    to_respawn = []
-    for pos, timer in list(world_state.gold_respawn_timer.items()):
-        world_state.gold_respawn_timer[pos] = timer - 1
-        if world_state.gold_respawn_timer[pos] <= 0:
-            to_respawn.append(pos)
-    for pos in to_respawn:
-        del world_state.gold_respawn_timer[pos]
-        if not is_blocked(*pos):
-            world_state.gold_positions.add(pos)
+def respawn_gold_piece():
+    spawn_gold(len(world_state.gold_positions) + 1)
 

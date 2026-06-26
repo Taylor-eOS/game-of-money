@@ -216,7 +216,7 @@ def check_gold_pickup(i):
     if pos in world.world_state.gold_positions:
         world.world_state.gold_positions.discard(pos)
         creature_state.gold[i] += 1
-        world.world_state.gold_respawn_timer[pos] = settings.GOLD_RESPAWN_TICKS
+        world.respawn_gold_piece()
         creature_state.score[i] += 2.0
         if creature_state.target[i] is not None and creature_state.target[i].get("pos") == pos:
             creature_state.target[i] = None
@@ -252,7 +252,6 @@ def update_creature_move(i):
     accumulate_survival_score(i)
 
 def update_creatures():
-    world.tick_gold_respawn()
     for i in range(len(creature_state.x)):
         if creature_state.alive[i]:
             update_creature_move(i)
@@ -262,3 +261,4 @@ def update_creatures():
     world.world_state.tick_counter += 1
     if world.world_state.tick_counter % settings.GENERATION_TICKS == 0:
         apply_generational_nudge()
+
