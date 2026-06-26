@@ -20,18 +20,8 @@ class CreatureState:
     target: list = field(default_factory=list)
 
 creature_state = CreatureState()
-NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
 
-def nearby_creatures(i, x, y):
-    others = []
-    for j in range(len(creature_state.x)):
-        if j == i or not creature_state.alive[j]:
-            continue
-        ox, oy = int(creature_state.x[j]), int(creature_state.y[j])
-        dist = abs(ox - x) + abs(oy - y)
-        others.append((dist, j, ox, oy))
-    others.sort(key=lambda item: item[0])
-    return others
+NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
 
 def create_creatures(count):
     xs, ys = [], []
@@ -51,6 +41,7 @@ def create_creatures(count):
     creature_state.score = np.zeros(count, dtype=np.float32)
     creature_state.alive = np.ones(count, dtype=np.bool_)
     creature_state.target = [None] * count
+    world.set_creature_count(count)
 
 def _astar_first_step(sx, sy, gx, gy, extra_blocked=None):
     if world.is_blocked(gx, gy):
@@ -85,29 +76,53 @@ def _astar_first_step(sx, sy, gx, gy, extra_blocked=None):
                 heapq.heappush(open_heap, (f, nx, ny))
     return None
 
-def _random_open_cell():
-    for _ in range(200):
-        x = random.randint(0, settings.GRID_COLS - 1)
-        y = random.randint(0, settings.GRID_ROWS - 1)
-        if not world.is_blocked(x, y):
-            return x, y
-    return None, None
+def _gold_index_at(x, y):
+    for i in range(settings.GOLD_COUNT):
+        if (world.world_state.gold_active[i]
+                and int(world.world_state.gold_x[i]) == x
+                and int(world.world_state.gold_y[i]) == y):
+            return i
+    return None
 
 def select_target(i):
     x, y = int(creature_state.x[i]), int(creature_state.y[i])
-    if world.world_state.gold_positions:
-        gx, gy = min(world.world_state.gold_positions, key=lambda p: abs(p[0] - x) + abs(p[1] - y))
-        return {"type": "gold", "pos": (gx, gy)}
-    wx, wy = _random_open_cell()
-    if wx is not None:
-        return {"type": "wander", "pos": (wx, wy)}
+    active_gold = []
+    for gi in range(settings.GOLD_COUNT):
+        if not world.world_state.gold_active[gi]:
+            continue
+        gx, gy = int(world.world_state.gold_x[gi]), int(world.world_state.gold_y[gi])
+        active_gold.append((gi, gx, gy))
+    if active_gold:
+        if len(active_gold) <= 3:
+            gi, gx, gy = random.choice(active_gold)
+            return {"type": "gold", "gold_index": gi, "pos": (gx, gy)}
+        sample_size = min(5, len(active_gold))
+        sampled = random.sample(active_gold, sample_size)
+        best_gi, best_gx, best_gy = min(sampled, key=lambda g: abs(g[1] - x) + abs(g[2] - y))
+        return {"type": "gold", "gold_index": best_gi, "pos": (best_gx, best_gy)}
+    creature_candidates = []
+    for j in range(len(creature_state.x)):
+        if i == j or not creature_state.alive[j]:
+            continue
+        cx, cy = int(creature_state.x[j]), int(creature_state.y[j])
+        dist = abs(cx - x) + abs(cy - y)
+        if dist <= 5:
+            creature_candidates.append((j, dist))
+    if creature_candidates:
+        creature_candidates.sort(key=lambda x: x[1])
+        top_candidates = creature_candidates[:min(3, len(creature_candidates))]
+        chosen = random.choice(top_candidates)
+        return {"type": "creature", "id": chosen[0]}
     return None
 
 def _target_position(i, target):
     if target is None:
         return None, None
-    if target["type"] in ("gold", "wander"):
-        return target["pos"]
+    if target["type"] == "gold":
+        gi = target["gold_index"]
+        if world.world_state.gold_active[gi]:
+            return int(world.world_state.gold_x[gi]), int(world.world_state.gold_y[gi])
+        return None, None
     if target["type"] == "creature":
         j = target["id"]
         if j < len(creature_state.x) and creature_state.alive[j]:
@@ -118,9 +133,8 @@ def _target_still_valid(i, target):
     if target is None:
         return False
     if target["type"] == "gold":
-        return target["pos"] in world.world_state.gold_positions
-    if target["type"] == "wander":
-        return True
+        gi = target["gold_index"]
+        return gi < settings.GOLD_COUNT and world.world_state.gold_active[gi]
     if target["type"] == "creature":
         j = target["id"]
         return j < len(creature_state.x) and creature_state.alive[j]
@@ -135,10 +149,7 @@ def choose_move(i):
     if target is None:
         return x, y
     tx, ty = _target_position(i, target)
-    if tx is None:
-        creature_state.target[i] = None
-        return x, y
-    if x == tx and y == ty:
+    if tx is None or (x == tx and y == ty):
         creature_state.target[i] = None
         return x, y
     occupied = set(zip(creature_state.x[creature_state.alive].tolist(),
@@ -185,19 +196,9 @@ INTERACTION_TYPES = {
 
 def build_interaction_prompt(i, j, interaction_type, outcome):
     desc = INTERACTION_TYPES[interaction_type]["description"]
-    prompt = (
-        f"Two creatures meet in a grid world simulation and {desc}. "
-    )
-    return prompt
+    return f"Two creatures meet in a grid world simulation and {desc}. "
 
-def handle_proximity_events(i):
-    x, y = int(creature_state.x[i]), int(creature_state.y[i])
-    others = nearby_creatures(i, x, y)
-    if not others:
-        return
-    nearest_dist, j, ox, oy = others[0]
-    if nearest_dist > 1:
-        return
+def trigger_creature_interaction(i, j):
     if random.random() < settings.INTERACTION_CHANCE:
         return
     interaction_type = random.choice(list(INTERACTION_TYPES.keys()))
@@ -212,15 +213,19 @@ def handle_proximity_events(i):
         print(f"[interaction {i},{j}] type={interaction_type} outcome: {outcome}")
 
 def check_gold_pickup(i):
-    pos = (int(creature_state.x[i]), int(creature_state.y[i]))
-    if pos in world.world_state.gold_positions:
-        world.world_state.gold_positions.discard(pos)
-        creature_state.gold[i] += 1
-        world.respawn_gold_piece()
-        creature_state.score[i] += 2.0
-        if creature_state.target[i] is not None and creature_state.target[i].get("pos") == pos:
-            creature_state.target[i] = None
-        print(f"[creature {i}] picked up gold at {pos}, total={int(creature_state.gold[i])}")
+    px, py = int(creature_state.x[i]), int(creature_state.y[i])
+    gi = _gold_index_at(px, py)
+    if gi is None:
+        return
+    world.world_state.gold_active[gi] = False
+    world.remove_target(world.gold_target_id(gi))
+    creature_state.gold[i] += 1
+    world.respawn_gold_piece(gi)
+    creature_state.score[i] += 2.0
+    t = creature_state.target[i]
+    if t is not None and t.get("type") == "gold" and t.get("gold_index") == gi:
+        creature_state.target[i] = None
+    print(f"[creature {i}] picked up gold at ({px},{py}), total={int(creature_state.gold[i])}")
 
 def accumulate_survival_score(i):
     creature_state.score[i] += (int(creature_state.hp[i]) / 100.0) * 0.1 + int(creature_state.gold[i]) * 0.05
@@ -242,23 +247,29 @@ def apply_generational_nudge():
 def update_creature_move(i):
     x, y = int(creature_state.x[i]), int(creature_state.y[i])
     nx, ny = choose_move(i)
-    moved = (nx != x or ny != y)
-    if moved:
+    if nx == x and ny == y:
+        accumulate_survival_score(i)
+        return
+    target_creature_id = None
+    for j in range(len(creature_state.x)):
+        if i != j and creature_state.alive[j] and int(creature_state.x[j]) == nx and int(creature_state.y[j]) == ny:
+            target_creature_id = j
+            break
+    if target_creature_id is None:
         creature_state.x[i] = nx
         creature_state.y[i] = ny
         world.world_state.visit[ny, nx] += 1
-    creature_state.last_action[i] = f"({nx},{ny})"
-    check_gold_pickup(i)
+        creature_state.last_action[i] = f"({nx},{ny})"
+        check_gold_pickup(i)
+    else:
+        trigger_creature_interaction(i, target_creature_id)
+        creature_state.last_action[i] = f"interact({target_creature_id})"
     accumulate_survival_score(i)
 
 def update_creatures():
     for i in range(len(creature_state.x)):
         if creature_state.alive[i]:
             update_creature_move(i)
-    for i in range(len(creature_state.x)):
-        if creature_state.alive[i]:
-            handle_proximity_events(i)
     world.world_state.tick_counter += 1
     if world.world_state.tick_counter % settings.GENERATION_TICKS == 0:
         apply_generational_nudge()
-

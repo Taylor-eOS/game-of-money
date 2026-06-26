@@ -21,7 +21,12 @@ def draw_gold_shape(surf, grid_x, grid_y):
     center_x = grid_x * CELL_W + CELL_W // 2
     center_y = grid_y * CELL_H + CELL_H // 2
     radius = min(CELL_W, CELL_H) // settings.GOLD_SMALLNESS
-    points = [(center_x, center_y - radius), (center_x + radius, center_y), (center_x, center_y + radius), (center_x - radius, center_y)]
+    points = [
+        (center_x, center_y - radius),
+        (center_x + radius, center_y),
+        (center_x, center_y + radius),
+        (center_x - radius, center_y),
+    ]
     pygame.draw.polygon(surf, GOLD_COLOR, points)
 
 def create_world_surface():
@@ -30,8 +35,9 @@ def create_world_surface():
     for block_x, block_y in world.world_state.blocks:
         pygame.draw.rect(surf, (100, 100, 100),
                          pygame.Rect(block_x * CELL_W, block_y * CELL_H, CELL_W, CELL_H))
-    for gx, gy in world.world_state.gold_positions:
-        draw_gold_shape(surf, gx, gy)
+    for i in range(settings.GOLD_COUNT):
+        if world.world_state.gold_active[i]:
+            draw_gold_shape(surf, int(world.world_state.gold_x[i]), int(world.world_state.gold_y[i]))
     return surf
 
 def render_frame(screen, world_surf):
