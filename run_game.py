@@ -6,13 +6,11 @@ import sprites
 import settings
 
 pygame.init()
-CELL_W = settings.SCALE
-CELL_H = settings.SCALE
-WIDTH = settings.COLS * CELL_W
-HEIGHT = settings.ROWS * CELL_H
+CELL_W = settings.GRID_SCALE
+CELL_H = settings.GRID_SCALE
+WIDTH = settings.GRID_COLS * CELL_W
+HEIGHT = settings.GRID_ROWS * CELL_H
 GOLD_COLOR = (255, 215, 0)
-
-creature_surfaces = []
 
 def init_display():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -44,7 +42,7 @@ def render_frame(screen, world_surf):
             continue
         cx = int(game_logic.creature_state.x[i]) * CELL_W
         cy = int(game_logic.creature_state.y[i]) * CELL_H
-        screen.blit(creature_surfaces[i], (cx, cy))
+        screen.blit(sprites.creature_surfaces[i], (cx, cy))
     pygame.display.flip()
 
 def handle_events():
@@ -57,14 +55,14 @@ def main():
     screen = init_display()
     world.init_world()
     game_logic.create_creatures(settings.CREATURE_COUNT)
-    creature_surfaces.extend(sprites.bake_creature_surfaces(game_logic.creature_state.shirt))
+    sprites.bake_creature_surfaces(settings.CREATURE_COUNT)
     clock = pygame.time.Clock()
     while True:
         handle_events()
         game_logic.update_creatures()
         world_surf = create_world_surface()
         render_frame(screen, world_surf)
-        clock.tick(settings.SPEED)
+        clock.tick(settings.CLOCK_SPEED)
 
 if __name__ == "__main__":
     main()

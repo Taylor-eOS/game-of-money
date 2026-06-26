@@ -28,19 +28,19 @@ def init_world():
     if hasattr(settings, "AREAS"):
         for x1, y1, x2, y2, name in settings.AREAS:
             world_state.areas.append((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2), name))
-    world_state.visit = np.zeros((settings.ROWS, settings.COLS), dtype=np.int32)
+    world_state.visit = np.zeros((settings.GRID_ROWS, settings.GRID_COLS), dtype=np.int32)
     spawn_gold(settings.GOLD_COUNT)
 
 def is_blocked(x, y):
-    if x < 0 or y < 0 or x >= settings.COLS or y >= settings.ROWS:
+    if x < 0 or y < 0 or x >= settings.GRID_COLS or y >= settings.GRID_ROWS:
         return True
     return (x, y) in world_state.blocks
 
 def spawn_gold(count):
     attempts = 0
     while len(world_state.gold_positions) < count and attempts < count * 20:
-        x = random.randint(0, settings.COLS - 1)
-        y = random.randint(0, settings.ROWS - 1)
+        x = random.randint(0, settings.GRID_COLS - 1)
+        y = random.randint(0, settings.GRID_ROWS - 1)
         if not is_blocked(x, y) and (x, y) not in world_state.gold_positions:
             world_state.gold_positions.add((x, y))
         attempts += 1

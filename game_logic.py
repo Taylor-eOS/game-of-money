@@ -17,7 +17,6 @@ class CreatureState:
     alive: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.bool_))
     last_action: list = field(default_factory=list)
     last_interaction: list = field(default_factory=list)
-    shirt: list = field(default_factory=list)
     target: list = field(default_factory=list)
 
 creature_state = CreatureState()
@@ -37,8 +36,8 @@ def nearby_creatures(i, x, y):
 def create_creatures(count):
     xs, ys = [], []
     while len(xs) < count:
-        x = random.randint(0, settings.COLS - 1)
-        y = random.randint(0, settings.ROWS - 1)
+        x = random.randint(0, settings.GRID_COLS - 1)
+        y = random.randint(0, settings.GRID_ROWS - 1)
         if not world.is_blocked(x, y):
             xs.append(x)
             ys.append(y)
@@ -51,7 +50,6 @@ def create_creatures(count):
     creature_state.last_interaction = [""] * count
     creature_state.score = np.zeros(count, dtype=np.float32)
     creature_state.alive = np.ones(count, dtype=np.bool_)
-    creature_state.shirt = [(random.randint(80, 220), random.randint(80, 220), random.randint(80, 220)) for _ in range(count)]
     creature_state.target = [None] * count
 
 def _astar_first_step(sx, sy, gx, gy, extra_blocked=None):
@@ -89,8 +87,8 @@ def _astar_first_step(sx, sy, gx, gy, extra_blocked=None):
 
 def _random_open_cell():
     for _ in range(200):
-        x = random.randint(0, settings.COLS - 1)
-        y = random.randint(0, settings.ROWS - 1)
+        x = random.randint(0, settings.GRID_COLS - 1)
+        y = random.randint(0, settings.GRID_ROWS - 1)
         if not world.is_blocked(x, y):
             return x, y
     return None, None
@@ -180,15 +178,15 @@ def _effect_fight(i, j):
     return f"winner={winner}"
 
 INTERACTION_TYPES = {
-    "talk":  {"description": "are in proximity", "effect": _effect_talk},
-    "trade": {"description": "exchange a resource",  "effect": _effect_trade},
-    "fight": {"description": "contest physically",   "effect": _effect_fight},
+    "talk": {"description": "are in proximity", "effect": _effect_talk},
+    "trade": {"description": "exchange a resource", "effect": _effect_trade},
+    "fight": {"description": "contest physically", "effect": _effect_fight},
 }
 
 def build_interaction_prompt(i, j, interaction_type, outcome):
     desc = INTERACTION_TYPES[interaction_type]["description"]
     prompt = (
-        f"Two creatures meet and {desc} in a grid world simulation. "
+        f"Two creatures meet in a grid world simulation and {desc}. "
     )
     return prompt
 
@@ -237,10 +235,7 @@ def apply_generational_nudge():
     for i in alive_indices:
         if i == best_i:
             continue
-        creature_state.traits[i] = np.clip(
-            creature_state.traits[i] * (1.0 - nudge) + best_traits * nudge,
-            0.0, 1.0
-        )
+        creature_state.traits[i] = np.clip(creature_state.traits[i] * (1.0 - nudge) + best_traits * nudge, 0.0, 1.0)
     creature_state.score[:] = 0.0
     print(f"[generation] nudged toward creature {best_i}: {best_traits.tolist()}")
 
@@ -256,9 +251,6 @@ def update_creature_move(i):
     check_gold_pickup(i)
     accumulate_survival_score(i)
 
-def update_creature_interact(i):
-    handle_proximity_events(i)
-
 def update_creatures():
     world.tick_gold_respawn()
     for i in range(len(creature_state.x)):
@@ -266,7 +258,7 @@ def update_creatures():
             update_creature_move(i)
     for i in range(len(creature_state.x)):
         if creature_state.alive[i]:
-            update_creature_interact(i)
+            handle_proximity_events(i)
     world.world_state.tick_counter += 1
     if world.world_state.tick_counter % settings.GENERATION_TICKS == 0:
         apply_generational_nudge()
