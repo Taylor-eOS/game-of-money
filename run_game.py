@@ -38,11 +38,16 @@ def render_frame(screen, world_surf):
     screen.blit(world_surf, (0, 0))
     n = len(game_logic.creature_state.x)
     for i in range(n):
-        if not game_logic.creature_state.alive[i]:
-            continue
         cx = int(game_logic.creature_state.x[i]) * CELL_W
         cy = int(game_logic.creature_state.y[i]) * CELL_H
-        screen.blit(sprites.creature_surfaces[i], (cx, cy))
+        if game_logic.creature_state.alive[i]:
+            screen.blit(sprites.creature_surfaces[i], (cx, cy))
+        else:
+            dead_surf = sprites.dead_surfaces[i]
+            dw, dh = dead_surf.get_size()
+            ox = cx + (CELL_W - dw) // 2
+            oy = cy + (CELL_H - dh) // 2
+            screen.blit(dead_surf, (ox, oy))
     pygame.display.flip()
 
 def handle_events():
