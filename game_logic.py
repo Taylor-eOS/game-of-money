@@ -6,7 +6,7 @@ import world
 import settings
 
 _NET_IN = 8
-_NET_H = 16
+_NET_H = 64
 _NET_OUT = 1
 _W1_SIZE = _NET_IN * _NET_H
 _B1_SIZE = _NET_H
@@ -29,6 +29,19 @@ class CreatureState:
 creature_state = CreatureState()
 NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
 
+def _xavier_layer(fan_in, fan_out, rng=None):
+    limit = np.sqrt(6.0 / (fan_in + fan_out))
+    if rng is not None:
+        return rng.uniform(-limit, limit, size=fan_in * fan_out).astype(np.float32)
+    return np.random.uniform(-limit, limit, size=fan_in * fan_out).astype(np.float32)
+
+def _init_traits(rng=None):
+    w1 = _xavier_layer(_NET_IN, _NET_H, rng)
+    b1 = np.zeros(_NET_H, dtype=np.float32)
+    w2 = _xavier_layer(_NET_H, _NET_OUT, rng)
+    b2 = np.zeros(_NET_OUT, dtype=np.float32)
+    return np.concatenate([w1, b1, w2, b2])
+
 def _unpack_weights(traits):
     w1 = traits[:_W1_SIZE].reshape(_NET_IN, _NET_H)
     b1 = traits[_W1_SIZE:_W1_SIZE + _B1_SIZE]
@@ -43,16 +56,18 @@ def _net_forward(traits, features):
 
 def _candidate_features(ci, tx, ty, is_gold_flag):
     cx, cy = int(creature_state.x[ci]), int(creature_state.y[ci])
-    dx = (tx - cx) / settings.GRID_COLS
-    dy = (ty - cy) / settings.GRID_ROWS
-    dist = (abs(tx - cx) + abs(ty - cy)) / (settings.GRID_COLS + settings.GRID_ROWS)
+    manhattan = abs(tx - cx) + abs(ty - cy)
+    dx = float(tx - cx) / max(settings.GRID_COLS, settings.GRID_ROWS)
+    dy = float(ty - cy) / max(settings.GRID_COLS, settings.GRID_ROWS)
+    dist = np.log1p(float(manhattan)) / np.log1p(settings.GRID_COLS + settings.GRID_ROWS)
     r = settings.DENSITY_RADIUS
     density = float(np.sum(
         (np.abs(creature_state.x[creature_state.alive] - tx) +
          np.abs(creature_state.y[creature_state.alive] - ty)) <= r
     )) / settings.DENSITY_NORM
     hp_norm = float(creature_state.hp[ci]) / 100.0
-    return np.array([dx, dy, dist, density, hp_norm, is_gold_flag, 0.0, 0.0], dtype=np.float32)
+    own_gold_norm = np.log1p(float(creature_state.gold[ci])) / np.log1p(50.0)
+    return np.array([dx, dy, dist, density, hp_norm, is_gold_flag, own_gold_norm, 1.0], dtype=np.float32)
 
 def _apply_hebbian(i, lr):
     feats = creature_state.last_features[i]
@@ -64,11 +79,11 @@ def _apply_hebbian(i, lr):
     db1 = hidden * lr
     dw2 = np.outer(hidden, np.array([1.0], dtype=np.float32)) * lr
     db2 = np.array([lr], dtype=np.float32)
-    traits[:_W1_SIZE] = np.clip(traits[:_W1_SIZE] + dw1.ravel(), -2.0, 2.0)
-    traits[_W1_SIZE:_W1_SIZE + _B1_SIZE] = np.clip(traits[_W1_SIZE:_W1_SIZE + _B1_SIZE] + db1, -2.0, 2.0)
+    traits[:_W1_SIZE] = np.clip(traits[:_W1_SIZE] + dw1.ravel(), -5.0, 5.0)
+    traits[_W1_SIZE:_W1_SIZE + _B1_SIZE] = np.clip(traits[_W1_SIZE:_W1_SIZE + _B1_SIZE] + db1, -5.0, 5.0)
     w2_start = _W1_SIZE + _B1_SIZE
-    traits[w2_start:w2_start + _W2_SIZE] = np.clip(traits[w2_start:w2_start + _W2_SIZE] + dw2.ravel(), -2.0, 2.0)
-    traits[w2_start + _W2_SIZE:] = np.clip(traits[w2_start + _W2_SIZE:] + db2, -2.0, 2.0)
+    traits[w2_start:w2_start + _W2_SIZE] = np.clip(traits[w2_start:w2_start + _W2_SIZE] + dw2.ravel(), -5.0, 5.0)
+    traits[w2_start + _W2_SIZE:] = np.clip(traits[w2_start + _W2_SIZE:] + db2, -5.0, 5.0)
 
 def create_creatures(count):
     xs, ys = [], []
@@ -83,7 +98,7 @@ def create_creatures(count):
     creature_state.y = np.zeros(cap, dtype=np.int32)
     creature_state.hp = np.zeros(cap, dtype=np.int32)
     creature_state.gold = np.zeros(cap, dtype=np.int32)
-    creature_state.traits = np.random.uniform(-0.5, 0.5, size=(cap, TRAIT_DIM)).astype(np.float32)
+    creature_state.traits = np.stack([_init_traits() for _ in range(cap)]).astype(np.float32)
     creature_state.alive = np.zeros(cap, dtype=np.bool_)
     creature_state.target = [None] * cap
     creature_state.last_features = [None] * cap
@@ -218,7 +233,10 @@ def _target_still_valid(ci, target):
         return gi < settings.GOLD_COUNT and world.world_state.gold_active[gi]
     if target["type"] == "creature":
         j = target["id"]
-        return j < len(creature_state.x) and creature_state.alive[j]
+        if not (j < len(creature_state.x) and creature_state.alive[j]):
+            return False
+        dist = abs(int(creature_state.x[j]) - int(creature_state.x[ci])) + abs(int(creature_state.y[j]) - int(creature_state.y[ci]))
+        return dist <= 10
     return False
 
 def choose_move(ci):
@@ -230,8 +248,10 @@ def choose_move(ci):
     if target is None:
         return x, y
     tx, ty = _target_position(ci, target)
-    if tx is None or (x == tx and y == ty):
+    if tx is None:
         creature_state.target[ci] = None
+        return x, y
+    if x == tx and y == ty:
         return x, y
     occupied = set(zip(creature_state.x[creature_state.alive].tolist(),
                        creature_state.y[creature_state.alive].tolist()))
