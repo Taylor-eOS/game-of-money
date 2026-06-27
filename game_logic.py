@@ -2,9 +2,17 @@ import random
 import numpy as np
 import heapq
 from dataclasses import dataclass, field
-from gguf_llm_library import ask_llm
 import world
 import settings
+
+_NET_IN = 8
+_NET_H = 16
+_NET_OUT = 1
+_W1_SIZE = _NET_IN * _NET_H
+_B1_SIZE = _NET_H
+_W2_SIZE = _NET_H * _NET_OUT
+_B2_SIZE = _NET_OUT
+TRAIT_DIM = _W1_SIZE + _B1_SIZE + _W2_SIZE + _B2_SIZE
 
 @dataclass
 class CreatureState:
@@ -12,16 +20,55 @@ class CreatureState:
     y: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     hp: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     gold: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
-    traits: np.ndarray = field(default_factory=lambda: np.empty((0, settings.LATENT_DIM), dtype=np.float32))
-    score: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.float32))
+    traits: np.ndarray = field(default_factory=lambda: np.empty((0, TRAIT_DIM), dtype=np.float32))
     alive: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.bool_))
-    last_action: list = field(default_factory=list)
-    last_interaction: list = field(default_factory=list)
     target: list = field(default_factory=list)
+    last_features: list = field(default_factory=list)
+    last_hidden: list = field(default_factory=list)
 
 creature_state = CreatureState()
-
 NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
+
+def _unpack_weights(traits):
+    w1 = traits[:_W1_SIZE].reshape(_NET_IN, _NET_H)
+    b1 = traits[_W1_SIZE:_W1_SIZE + _B1_SIZE]
+    w2 = traits[_W1_SIZE + _B1_SIZE:_W1_SIZE + _B1_SIZE + _W2_SIZE].reshape(_NET_H, _NET_OUT)
+    b2 = traits[_W1_SIZE + _B1_SIZE + _W2_SIZE:]
+    return w1, b1, w2, b2
+
+def _net_forward(traits, features):
+    w1, b1, w2, b2 = _unpack_weights(traits)
+    h = np.tanh(features @ w1 + b1)
+    return float((h @ w2 + b2)[0]), h
+
+def _candidate_features(ci, tx, ty, is_gold_flag):
+    cx, cy = int(creature_state.x[ci]), int(creature_state.y[ci])
+    dx = (tx - cx) / settings.GRID_COLS
+    dy = (ty - cy) / settings.GRID_ROWS
+    dist = (abs(tx - cx) + abs(ty - cy)) / (settings.GRID_COLS + settings.GRID_ROWS)
+    r = settings.DENSITY_RADIUS
+    density = float(np.sum(
+        (np.abs(creature_state.x[creature_state.alive] - tx) +
+         np.abs(creature_state.y[creature_state.alive] - ty)) <= r
+    )) / settings.DENSITY_NORM
+    hp_norm = float(creature_state.hp[ci]) / 100.0
+    return np.array([dx, dy, dist, density, hp_norm, is_gold_flag, 0.0, 0.0], dtype=np.float32)
+
+def _apply_hebbian(i, lr):
+    feats = creature_state.last_features[i]
+    hidden = creature_state.last_hidden[i]
+    if feats is None or hidden is None:
+        return
+    traits = creature_state.traits[i]
+    dw1 = np.outer(feats, hidden) * lr
+    db1 = hidden * lr
+    dw2 = np.outer(hidden, np.array([1.0], dtype=np.float32)) * lr
+    db2 = np.array([lr], dtype=np.float32)
+    traits[:_W1_SIZE] = np.clip(traits[:_W1_SIZE] + dw1.ravel(), -2.0, 2.0)
+    traits[_W1_SIZE:_W1_SIZE + _B1_SIZE] = np.clip(traits[_W1_SIZE:_W1_SIZE + _B1_SIZE] + db1, -2.0, 2.0)
+    w2_start = _W1_SIZE + _B1_SIZE
+    traits[w2_start:w2_start + _W2_SIZE] = np.clip(traits[w2_start:w2_start + _W2_SIZE] + dw2.ravel(), -2.0, 2.0)
+    traits[w2_start + _W2_SIZE:] = np.clip(traits[w2_start + _W2_SIZE:] + db2, -2.0, 2.0)
 
 def create_creatures(count):
     xs, ys = [], []
@@ -31,17 +78,47 @@ def create_creatures(count):
         if not world.is_blocked(x, y):
             xs.append(x)
             ys.append(y)
-    creature_state.x = np.array(xs, dtype=np.int32)
-    creature_state.y = np.array(ys, dtype=np.int32)
-    creature_state.hp = np.full(count, 100, dtype=np.int32)
-    creature_state.gold = np.zeros(count, dtype=np.int32)
-    creature_state.traits = np.random.uniform(0.0, 1.0, size=(count, settings.LATENT_DIM)).astype(np.float32)
-    creature_state.last_action = [""] * count
-    creature_state.last_interaction = [""] * count
-    creature_state.score = np.zeros(count, dtype=np.float32)
-    creature_state.alive = np.ones(count, dtype=np.bool_)
-    creature_state.target = [None] * count
-    world.set_creature_count(count)
+    cap = settings.CREATURE_COUNT
+    creature_state.x = np.zeros(cap, dtype=np.int32)
+    creature_state.y = np.zeros(cap, dtype=np.int32)
+    creature_state.hp = np.zeros(cap, dtype=np.int32)
+    creature_state.gold = np.zeros(cap, dtype=np.int32)
+    creature_state.traits = np.random.uniform(-0.5, 0.5, size=(cap, TRAIT_DIM)).astype(np.float32)
+    creature_state.alive = np.zeros(cap, dtype=np.bool_)
+    creature_state.target = [None] * cap
+    creature_state.last_features = [None] * cap
+    creature_state.last_hidden = [None] * cap
+    for i in range(count):
+        creature_state.x[i] = xs[i]
+        creature_state.y[i] = ys[i]
+        creature_state.hp[i] = 100
+        creature_state.alive[i] = True
+    world.set_creature_count(cap)
+
+def _cull_one():
+    alive_indices = np.where(creature_state.alive)[0]
+    if len(alive_indices) < 2:
+        return
+    golds = creature_state.gold[alive_indices]
+    top_gold = int(np.max(golds))
+    base = settings.CULL_GOLD_PERCENTILE * 100
+    extra = min(top_gold * settings.CULL_PER_GOLD, settings.CULL_MAX_PERCENTILE * 100 - base)
+    threshold_pct = base + extra
+    threshold = np.percentile(golds, threshold_pct)
+    eligible = alive_indices[golds <= threshold]
+    if len(eligible) == 0:
+        return
+    victim = int(np.random.choice(eligible))
+    creature_state.alive[victim] = False
+    creature_state.hp[victim] = 0
+    print(f"[cull] creature {victim} culled (gold={int(creature_state.gold[victim])}, pct={threshold_pct:.1f})")
+    _respawn_creature(victim)
+
+def _breed_one():
+    dead_indices = np.where(~creature_state.alive)[0]
+    if len(dead_indices) == 0:
+        return
+    _respawn_creature(int(dead_indices[0]))
 
 def _astar_first_step(sx, sy, gx, gy, extra_blocked=None):
     if world.is_blocked(gx, gy):
@@ -84,38 +161,42 @@ def _gold_index_at(x, y):
             return i
     return None
 
-def select_target(i):
-    x, y = int(creature_state.x[i]), int(creature_state.y[i])
-    active_gold = []
+def select_target(ci):
+    traits = creature_state.traits[ci]
+    best_score = None
+    best_target = None
+    best_feats = None
+    best_hidden = None
     for gi in range(settings.GOLD_COUNT):
         if not world.world_state.gold_active[gi]:
             continue
         gx, gy = int(world.world_state.gold_x[gi]), int(world.world_state.gold_y[gi])
-        active_gold.append((gi, gx, gy))
-    if active_gold:
-        if len(active_gold) <= 3:
-            gi, gx, gy = random.choice(active_gold)
-            return {"type": "gold", "gold_index": gi, "pos": (gx, gy)}
-        sample_size = min(5, len(active_gold))
-        sampled = random.sample(active_gold, sample_size)
-        best_gi, best_gx, best_gy = min(sampled, key=lambda g: abs(g[1] - x) + abs(g[2] - y))
-        return {"type": "gold", "gold_index": best_gi, "pos": (best_gx, best_gy)}
-    creature_candidates = []
+        features = _candidate_features(ci, gx, gy, 1.0)
+        s, h = _net_forward(traits, features)
+        if best_score is None or s > best_score:
+            best_score = s
+            best_target = {"type": "gold", "gold_index": gi, "pos": (gx, gy)}
+            best_feats = features
+            best_hidden = h
     for j in range(len(creature_state.x)):
-        if i == j or not creature_state.alive[j]:
+        if j == ci or not creature_state.alive[j]:
             continue
-        cx, cy = int(creature_state.x[j]), int(creature_state.y[j])
-        dist = abs(cx - x) + abs(cy - y)
-        if dist <= 5:
-            creature_candidates.append((j, dist))
-    if creature_candidates:
-        creature_candidates.sort(key=lambda x: x[1])
-        top_candidates = creature_candidates[:min(3, len(creature_candidates))]
-        chosen = random.choice(top_candidates)
-        return {"type": "creature", "id": chosen[0]}
-    return None
+        jx, jy = int(creature_state.x[j]), int(creature_state.y[j])
+        dist = abs(jx - int(creature_state.x[ci])) + abs(jy - int(creature_state.y[ci]))
+        if dist > 10:
+            continue
+        features = _candidate_features(ci, jx, jy, 0.0)
+        s, h = _net_forward(traits, features)
+        if best_score is None or s > best_score:
+            best_score = s
+            best_target = {"type": "creature", "id": j}
+            best_feats = features
+            best_hidden = h
+    creature_state.last_features[ci] = best_feats
+    creature_state.last_hidden[ci] = best_hidden
+    return best_target
 
-def _target_position(i, target):
+def _target_position(ci, target):
     if target is None:
         return None, None
     if target["type"] == "gold":
@@ -129,7 +210,7 @@ def _target_position(i, target):
             return int(creature_state.x[j]), int(creature_state.y[j])
     return None, None
 
-def _target_still_valid(i, target):
+def _target_still_valid(ci, target):
     if target is None:
         return False
     if target["type"] == "gold":
@@ -140,17 +221,17 @@ def _target_still_valid(i, target):
         return j < len(creature_state.x) and creature_state.alive[j]
     return False
 
-def choose_move(i):
-    x, y = int(creature_state.x[i]), int(creature_state.y[i])
-    target = creature_state.target[i]
-    if not _target_still_valid(i, target):
-        target = select_target(i)
-        creature_state.target[i] = target
+def choose_move(ci):
+    x, y = int(creature_state.x[ci]), int(creature_state.y[ci])
+    target = creature_state.target[ci]
+    if not _target_still_valid(ci, target):
+        target = select_target(ci)
+        creature_state.target[ci] = target
     if target is None:
         return x, y
-    tx, ty = _target_position(i, target)
+    tx, ty = _target_position(ci, target)
     if tx is None or (x == tx and y == ty):
-        creature_state.target[i] = None
+        creature_state.target[ci] = None
         return x, y
     occupied = set(zip(creature_state.x[creature_state.alive].tolist(),
                        creature_state.y[creature_state.alive].tolist()))
@@ -165,52 +246,51 @@ def choose_move(i):
             return nx, ny
     return x, y
 
-def _effect_talk(i, j):
-    creature_state.score[i] += 0.1
-    return "talk"
-
-def _effect_trade(i, j):
-    if int(creature_state.gold[i]) <= 0:
-        return "failure"
-    creature_state.gold[i] -= 1
-    creature_state.gold[j] += 1
-    creature_state.score[i] += 0.3
-    return "success"
+def _respawn_creature(i):
+    alive_indices = [j for j in range(len(creature_state.x)) if creature_state.alive[j]]
+    if not alive_indices:
+        return
+    parent = alive_indices[int(np.argmax(creature_state.gold[alive_indices]))]
+    spawn_x, spawn_y = int(creature_state.x[parent]), int(creature_state.y[parent])
+    attempts = 0
+    while attempts < 100:
+        cx = random.randint(0, settings.GRID_COLS - 1)
+        cy = random.randint(0, settings.GRID_ROWS - 1)
+        if not world.is_blocked(cx, cy):
+            spawn_x, spawn_y = cx, cy
+            break
+        attempts += 1
+    creature_state.x[i] = spawn_x
+    creature_state.y[i] = spawn_y
+    creature_state.hp[i] = 100
+    creature_state.gold[creature_state.alive] = 0
+    creature_state.gold[i] = 0
+    creature_state.alive[i] = True
+    creature_state.target[i] = None
+    creature_state.last_features[i] = None
+    creature_state.last_hidden[i] = None
+    creature_state.traits[i] = creature_state.traits[parent].copy()
+    print(f"[respawn] creature {i} copied from {parent}")
 
 def _effect_fight(i, j):
     power_i = float(creature_state.traits[i, 0]) + random.random()
     power_j = float(creature_state.traits[j, 0]) + random.random()
     winner = i if power_i >= power_j else j
     loser = j if winner == i else i
-    creature_state.hp[loser] = max(0, int(creature_state.hp[loser]) - random.randint(5, 20))
+    damage = random.randint(5, 20)
+    creature_state.hp[loser] = max(0, int(creature_state.hp[loser]) - damage)
+    _apply_hebbian(loser, -settings.HEBBIAN_LR_NEG)
     if creature_state.hp[loser] == 0:
         creature_state.alive[loser] = False
-    creature_state.score[winner] += 0.5
-    return f"winner={winner}"
-
-INTERACTION_TYPES = {
-    "talk": {"description": "are in proximity", "effect": _effect_talk},
-    "trade": {"description": "exchange a resource", "effect": _effect_trade},
-    "fight": {"description": "contest physically", "effect": _effect_fight},
-}
-
-def build_interaction_prompt(i, j, interaction_type, outcome):
-    desc = INTERACTION_TYPES[interaction_type]["description"]
-    return f"Two creatures meet in a grid world simulation and {desc}. "
+        print(f"[fight] creature {loser} killed by {winner}")
+        _respawn_creature(loser)
+    else:
+        print(f"[fight] creature {winner} hit {loser} for {damage}, hp={int(creature_state.hp[loser])}")
 
 def trigger_creature_interaction(i, j):
     if random.random() < settings.INTERACTION_CHANCE:
         return
-    interaction_type = random.choice(list(INTERACTION_TYPES.keys()))
-    creature_state.last_interaction[i] = interaction_type
-    outcome = INTERACTION_TYPES[interaction_type]["effect"](i, j)
-    if settings.ENABLE_LLM_INTERACTIONS:
-        prompt = build_interaction_prompt(i, j, interaction_type, outcome)
-        print(f"[interaction {i},{j}] type={interaction_type} prompt: {prompt}")
-        flavor = ask_llm(prompt, settings.LLM_MODEL).strip()
-        print(f"[interaction {i},{j}] flavor: {flavor}")
-    else:
-        print(f"[interaction {i},{j}] type={interaction_type} outcome: {outcome}")
+    _effect_fight(i, j)
 
 def check_gold_pickup(i):
     px, py = int(creature_state.x[i]), int(creature_state.y[i])
@@ -221,34 +301,16 @@ def check_gold_pickup(i):
     world.remove_target(world.gold_target_id(gi))
     creature_state.gold[i] += 1
     world.respawn_gold_piece(gi)
-    creature_state.score[i] += 2.0
     t = creature_state.target[i]
     if t is not None and t.get("type") == "gold" and t.get("gold_index") == gi:
         creature_state.target[i] = None
+    _apply_hebbian(i, settings.HEBBIAN_LR_POS)
     print(f"[creature {i}] picked up gold at ({px},{py}), total={int(creature_state.gold[i])}")
-
-def accumulate_survival_score(i):
-    creature_state.score[i] += (int(creature_state.hp[i]) / 100.0) * 0.1 + int(creature_state.gold[i]) * 0.05
-
-def apply_generational_nudge():
-    alive_indices = [i for i in range(len(creature_state.x)) if creature_state.alive[i]]
-    if len(alive_indices) < 2:
-        return
-    best_i = alive_indices[int(np.argmax(creature_state.score[alive_indices]))]
-    best_traits = creature_state.traits[best_i].copy()
-    nudge = settings.GENERATION_NUDGE_RATE
-    for i in alive_indices:
-        if i == best_i:
-            continue
-        creature_state.traits[i] = np.clip(creature_state.traits[i] * (1.0 - nudge) + best_traits * nudge, 0.0, 1.0)
-    creature_state.score[:] = 0.0
-    print(f"[generation] nudged toward creature {best_i}: {best_traits.tolist()}")
 
 def update_creature_move(i):
     x, y = int(creature_state.x[i]), int(creature_state.y[i])
     nx, ny = choose_move(i)
     if nx == x and ny == y:
-        accumulate_survival_score(i)
         return
     target_creature_id = None
     for j in range(len(creature_state.x)):
@@ -259,17 +321,19 @@ def update_creature_move(i):
         creature_state.x[i] = nx
         creature_state.y[i] = ny
         world.world_state.visit[ny, nx] += 1
-        creature_state.last_action[i] = f"({nx},{ny})"
         check_gold_pickup(i)
     else:
         trigger_creature_interaction(i, target_creature_id)
-        creature_state.last_action[i] = f"interact({target_creature_id})"
-    accumulate_survival_score(i)
 
 def update_creatures():
     for i in range(len(creature_state.x)):
         if creature_state.alive[i]:
             update_creature_move(i)
     world.world_state.tick_counter += 1
-    if world.world_state.tick_counter % settings.GENERATION_TICKS == 0:
-        apply_generational_nudge()
+    t = int(world.world_state.tick_counter)
+    if settings.CULL_INTERVAL > 0 and t % settings.CULL_INTERVAL == 0:
+        _cull_one()
+    if settings.BREED_INTERVAL > 0 and t % settings.BREED_INTERVAL == 0:
+        alive_count = int(np.sum(creature_state.alive))
+        if alive_count < settings.CREATURE_COUNT:
+            _breed_one()
