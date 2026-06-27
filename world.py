@@ -40,14 +40,14 @@ def set_creature_count(count):
     world_state.creature_count = count
     world_state.active_targets = list(range(count))
     for i in range(settings.GOLD_COUNT):
-        spawn_single_gold(i)
+        spawn_gold(i)
 
 def is_blocked(x, y):
     if x < 0 or y < 0 or x >= settings.GRID_COLS or y >= settings.GRID_ROWS:
         return True
     return (x, y) in world_state.blocks
 
-def spawn_single_gold(gold_index):
+def spawn_gold(gold_index):
     attempts = 0
     while attempts < 100:
         x = random.randint(0, settings.GRID_COLS - 1)
@@ -62,9 +62,6 @@ def spawn_single_gold(gold_index):
             return
         attempts += 1
 
-def respawn_gold_piece(gold_index):
-    spawn_single_gold(gold_index)
-
 def gold_target_id(gold_index):
     return world_state.creature_count + gold_index
 
@@ -73,8 +70,7 @@ def remove_target(target_id):
         world_state.active_targets.remove(target_id)
 
 def get_gold_positions():
-    return [
-        (int(world_state.gold_x[i]), int(world_state.gold_y[i]))
-        for i in range(settings.GOLD_COUNT)
-        if world_state.gold_active[i]
-    ]
+    return [(int(world_state.gold_x[i]), int(world_state.gold_y[i])) for i in range(settings.GOLD_COUNT) if world_state.gold_active[i]]
+
+def tick():
+    world_state.tick_counter += 1

@@ -4,15 +4,7 @@ import heapq
 from dataclasses import dataclass, field
 import world
 import settings
-
-_NET_IN = 8
-_NET_H = 64
-_NET_OUT = 1
-_W1_SIZE = _NET_IN * _NET_H
-_B1_SIZE = _NET_H
-_W2_SIZE = _NET_H * _NET_OUT
-_B2_SIZE = _NET_OUT
-TRAIT_DIM = _W1_SIZE + _B1_SIZE + _W2_SIZE + _B2_SIZE
+import creature_net
 
 @dataclass
 class CreatureState:
@@ -20,7 +12,7 @@ class CreatureState:
     y: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     hp: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     gold: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
-    traits: np.ndarray = field(default_factory=lambda: np.empty((0, TRAIT_DIM), dtype=np.float32))
+    traits: np.ndarray = field(default_factory=lambda: np.empty((0, creature_net.TRAIT_DIM), dtype=np.float32))
     alive: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.bool_))
     target: list = field(default_factory=list)
     last_features: list = field(default_factory=list)
@@ -29,30 +21,8 @@ class CreatureState:
 creature_state = CreatureState()
 NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
 
-def _xavier_layer(fan_in, fan_out, rng=None):
-    limit = np.sqrt(6.0 / (fan_in + fan_out))
-    if rng is not None:
-        return rng.uniform(-limit, limit, size=fan_in * fan_out).astype(np.float32)
-    return np.random.uniform(-limit, limit, size=fan_in * fan_out).astype(np.float32)
-
-def _init_traits(rng=None):
-    w1 = _xavier_layer(_NET_IN, _NET_H, rng)
-    b1 = np.zeros(_NET_H, dtype=np.float32)
-    w2 = _xavier_layer(_NET_H, _NET_OUT, rng)
-    b2 = np.zeros(_NET_OUT, dtype=np.float32)
-    return np.concatenate([w1, b1, w2, b2])
-
-def _unpack_weights(traits):
-    w1 = traits[:_W1_SIZE].reshape(_NET_IN, _NET_H)
-    b1 = traits[_W1_SIZE:_W1_SIZE + _B1_SIZE]
-    w2 = traits[_W1_SIZE + _B1_SIZE:_W1_SIZE + _B1_SIZE + _W2_SIZE].reshape(_NET_H, _NET_OUT)
-    b2 = traits[_W1_SIZE + _B1_SIZE + _W2_SIZE:]
-    return w1, b1, w2, b2
-
-def _net_forward(traits, features):
-    w1, b1, w2, b2 = _unpack_weights(traits)
-    h = np.tanh(features @ w1 + b1)
-    return float((h @ w2 + b2)[0]), h
+def _apply_hebbian(i, lr):
+    creature_net.apply_hebbian(creature_state.traits[i], creature_state.last_features[i], creature_state.last_hidden[i], lr,)
 
 def _candidate_features(ci, tx, ty, is_gold_flag):
     cx, cy = int(creature_state.x[ci]), int(creature_state.y[ci])
@@ -68,72 +38,6 @@ def _candidate_features(ci, tx, ty, is_gold_flag):
     hp_norm = float(creature_state.hp[ci]) / 100.0
     own_gold_norm = np.log1p(float(creature_state.gold[ci])) / np.log1p(50.0)
     return np.array([dx, dy, dist, density, hp_norm, is_gold_flag, own_gold_norm, 1.0], dtype=np.float32)
-
-def _apply_hebbian(i, lr):
-    feats = creature_state.last_features[i]
-    hidden = creature_state.last_hidden[i]
-    if feats is None or hidden is None:
-        return
-    traits = creature_state.traits[i]
-    dw1 = np.outer(feats, hidden) * lr
-    db1 = hidden * lr
-    dw2 = np.outer(hidden, np.array([1.0], dtype=np.float32)) * lr
-    db2 = np.array([lr], dtype=np.float32)
-    traits[:_W1_SIZE] = np.clip(traits[:_W1_SIZE] + dw1.ravel(), -5.0, 5.0)
-    traits[_W1_SIZE:_W1_SIZE + _B1_SIZE] = np.clip(traits[_W1_SIZE:_W1_SIZE + _B1_SIZE] + db1, -5.0, 5.0)
-    w2_start = _W1_SIZE + _B1_SIZE
-    traits[w2_start:w2_start + _W2_SIZE] = np.clip(traits[w2_start:w2_start + _W2_SIZE] + dw2.ravel(), -5.0, 5.0)
-    traits[w2_start + _W2_SIZE:] = np.clip(traits[w2_start + _W2_SIZE:] + db2, -5.0, 5.0)
-
-def create_creatures(count):
-    xs, ys = [], []
-    while len(xs) < count:
-        x = random.randint(0, settings.GRID_COLS - 1)
-        y = random.randint(0, settings.GRID_ROWS - 1)
-        if not world.is_blocked(x, y):
-            xs.append(x)
-            ys.append(y)
-    cap = settings.CREATURE_COUNT
-    creature_state.x = np.zeros(cap, dtype=np.int32)
-    creature_state.y = np.zeros(cap, dtype=np.int32)
-    creature_state.hp = np.zeros(cap, dtype=np.int32)
-    creature_state.gold = np.zeros(cap, dtype=np.int32)
-    creature_state.traits = np.stack([_init_traits() for _ in range(cap)]).astype(np.float32)
-    creature_state.alive = np.zeros(cap, dtype=np.bool_)
-    creature_state.target = [None] * cap
-    creature_state.last_features = [None] * cap
-    creature_state.last_hidden = [None] * cap
-    for i in range(count):
-        creature_state.x[i] = xs[i]
-        creature_state.y[i] = ys[i]
-        creature_state.hp[i] = 100
-        creature_state.alive[i] = True
-    world.set_creature_count(cap)
-
-def _cull_one():
-    alive_indices = np.where(creature_state.alive)[0]
-    if len(alive_indices) < 2:
-        return
-    golds = creature_state.gold[alive_indices]
-    top_gold = int(np.max(golds))
-    base = settings.CULL_GOLD_PERCENTILE * 100
-    extra = min(top_gold * settings.CULL_PER_GOLD, settings.CULL_MAX_PERCENTILE * 100 - base)
-    threshold_pct = base + extra
-    threshold = np.percentile(golds, threshold_pct)
-    eligible = alive_indices[golds <= threshold]
-    if len(eligible) == 0:
-        return
-    victim = int(np.random.choice(eligible))
-    creature_state.alive[victim] = False
-    creature_state.hp[victim] = 0
-    print(f"[cull] creature {victim} culled (gold={int(creature_state.gold[victim])}, pct={threshold_pct:.1f})")
-    _respawn_creature(victim)
-
-def _breed_one():
-    dead_indices = np.where(~creature_state.alive)[0]
-    if len(dead_indices) == 0:
-        return
-    _respawn_creature(int(dead_indices[0]))
 
 def _astar_first_step(sx, sy, gx, gy, extra_blocked=None):
     if world.is_blocked(gx, gy):
@@ -187,7 +91,7 @@ def select_target(ci):
             continue
         gx, gy = int(world.world_state.gold_x[gi]), int(world.world_state.gold_y[gi])
         features = _candidate_features(ci, gx, gy, 1.0)
-        s, h = _net_forward(traits, features)
+        s, h = creature_net.net_forward(traits, features)
         if best_score is None or s > best_score:
             best_score = s
             best_target = {"type": "gold", "gold_index": gi, "pos": (gx, gy)}
@@ -201,7 +105,7 @@ def select_target(ci):
         if dist > 10:
             continue
         features = _candidate_features(ci, jx, jy, 0.0)
-        s, h = _net_forward(traits, features)
+        s, h = creature_net.net_forward(traits, features)
         if best_score is None or s > best_score:
             best_score = s
             best_target = {"type": "creature", "id": j}
@@ -292,6 +196,56 @@ def _respawn_creature(i):
     creature_state.traits[i] = creature_state.traits[parent].copy()
     print(f"[respawn] creature {i} copied from {parent}")
 
+def create_creatures(count):
+    xs, ys = [], []
+    while len(xs) < count:
+        x = random.randint(0, settings.GRID_COLS - 1)
+        y = random.randint(0, settings.GRID_ROWS - 1)
+        if not world.is_blocked(x, y):
+            xs.append(x)
+            ys.append(y)
+    cap = settings.CREATURE_COUNT
+    creature_state.x = np.zeros(cap, dtype=np.int32)
+    creature_state.y = np.zeros(cap, dtype=np.int32)
+    creature_state.hp = np.zeros(cap, dtype=np.int32)
+    creature_state.gold = np.zeros(cap, dtype=np.int32)
+    creature_state.traits = np.stack([creature_net.init_traits() for _ in range(cap)]).astype(np.float32)
+    creature_state.alive = np.zeros(cap, dtype=np.bool_)
+    creature_state.target = [None] * cap
+    creature_state.last_features = [None] * cap
+    creature_state.last_hidden = [None] * cap
+    for i in range(count):
+        creature_state.x[i] = xs[i]
+        creature_state.y[i] = ys[i]
+        creature_state.hp[i] = 100
+        creature_state.alive[i] = True
+    world.set_creature_count(cap)
+
+def _cull_one():
+    alive_indices = np.where(creature_state.alive)[0]
+    if len(alive_indices) < 2:
+        return
+    golds = creature_state.gold[alive_indices]
+    top_gold = int(np.max(golds))
+    base = settings.CULL_GOLD_PERCENTILE * 100
+    extra = min(top_gold * settings.CULL_PER_GOLD, settings.CULL_MAX_PERCENTILE * 100 - base)
+    threshold_pct = base + extra
+    threshold = np.percentile(golds, threshold_pct)
+    eligible = alive_indices[golds <= threshold]
+    if len(eligible) == 0:
+        return
+    victim = int(np.random.choice(eligible))
+    creature_state.alive[victim] = False
+    creature_state.hp[victim] = 0
+    print(f"[cull] creature {victim} culled (gold={int(creature_state.gold[victim])}, pct={threshold_pct:.1f})")
+    _respawn_creature(victim)
+
+def _breed_one():
+    dead_indices = np.where(~creature_state.alive)[0]
+    if len(dead_indices) == 0:
+        return
+    _respawn_creature(int(dead_indices[0]))
+
 def _effect_fight(i, j):
     power_i = float(creature_state.traits[i, 0]) + random.random()
     power_j = float(creature_state.traits[j, 0]) + random.random()
@@ -320,7 +274,7 @@ def check_gold_pickup(i):
     world.world_state.gold_active[gi] = False
     world.remove_target(world.gold_target_id(gi))
     creature_state.gold[i] += 1
-    world.respawn_gold_piece(gi)
+    world.spawn_gold(gi)
     t = creature_state.target[i]
     if t is not None and t.get("type") == "gold" and t.get("gold_index") == gi:
         creature_state.target[i] = None
@@ -349,7 +303,7 @@ def update_creatures():
     for i in range(len(creature_state.x)):
         if creature_state.alive[i]:
             update_creature_move(i)
-    world.world_state.tick_counter += 1
+    world.tick()
     t = int(world.world_state.tick_counter)
     if settings.CULL_INTERVAL > 0 and t % settings.CULL_INTERVAL == 0:
         _cull_one()
@@ -357,3 +311,4 @@ def update_creatures():
         alive_count = int(np.sum(creature_state.alive))
         if alive_count < settings.CREATURE_COUNT:
             _breed_one()
+
