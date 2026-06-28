@@ -15,14 +15,10 @@ class CreatureState:
     traits: np.ndarray = field(default_factory=lambda: np.empty((0, creature_net.TRAIT_DIM), dtype=np.float32))
     alive: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.bool_))
     target: list = field(default_factory=list)
-    last_features: list = field(default_factory=list)
-    last_hidden: list = field(default_factory=list)
+    commit_ticks: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
 
 creature_state = CreatureState()
 NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
-
-def _apply_hebbian(i, lr):
-    creature_net.apply_hebbian(creature_state.traits[i], creature_state.last_features[i], creature_state.last_hidden[i], lr,)
 
 def _candidate_features(ci, tx, ty, is_gold_flag):
     cx, cy = int(creature_state.x[ci]), int(creature_state.y[ci])
@@ -31,13 +27,18 @@ def _candidate_features(ci, tx, ty, is_gold_flag):
     dy = float(ty - cy) / max(settings.GRID_COLS, settings.GRID_ROWS)
     dist = np.log1p(float(manhattan)) / np.log1p(settings.GRID_COLS + settings.GRID_ROWS)
     r = settings.DENSITY_RADIUS
-    density = float(np.sum(
-        (np.abs(creature_state.x[creature_state.alive] - tx) +
-         np.abs(creature_state.y[creature_state.alive] - ty)) <= r
-    )) / settings.DENSITY_NORM
+    alive_mask = creature_state.alive
+    alive_x = creature_state.x[alive_mask]
+    alive_y = creature_state.y[alive_mask]
+    density = float(np.sum((np.abs(alive_x - tx) + np.abs(alive_y - ty)) <= r)) / settings.DENSITY_NORM
+    closer_count = float(np.sum((np.abs(alive_x - tx) + np.abs(alive_y - ty)) < manhattan)) / max(1.0, float(np.sum(alive_mask)))
     hp_norm = float(creature_state.hp[ci]) / 100.0
-    own_gold_norm = np.log1p(float(creature_state.gold[ci])) / np.log1p(50.0)
-    return np.array([dx, dy, dist, density, hp_norm, is_gold_flag, own_gold_norm, 1.0], dtype=np.float32)
+    own_gold = float(creature_state.gold[ci])
+    own_gold_norm = np.log1p(own_gold) / np.log1p(50.0)
+    alive_indices = np.where(alive_mask)[0]
+    gold_vals = creature_state.gold[alive_indices].astype(np.float32)
+    rank_norm = float(np.sum(gold_vals < own_gold)) / max(1.0, float(len(alive_indices) - 1))
+    return np.array([dx, dy, dist, density, closer_count, hp_norm, is_gold_flag, own_gold_norm, rank_norm, 1.0], dtype=np.float32)
 
 def _astar_first_step(sx, sy, gx, gy, extra_blocked=None):
     if world.is_blocked(gx, gy):
@@ -84,19 +85,15 @@ def select_target(ci):
     traits = creature_state.traits[ci]
     best_score = None
     best_target = None
-    best_feats = None
-    best_hidden = None
     for gi in range(settings.GOLD_COUNT):
         if not world.world_state.gold_active[gi]:
             continue
         gx, gy = int(world.world_state.gold_x[gi]), int(world.world_state.gold_y[gi])
         features = _candidate_features(ci, gx, gy, 1.0)
-        s, h = creature_net.net_forward(traits, features)
+        s = creature_net.net_forward(traits, features)
         if best_score is None or s > best_score:
             best_score = s
             best_target = {"type": "gold", "gold_index": gi, "pos": (gx, gy)}
-            best_feats = features
-            best_hidden = h
     for j in range(len(creature_state.x)):
         if j == ci or not creature_state.alive[j]:
             continue
@@ -105,14 +102,10 @@ def select_target(ci):
         if dist > 10:
             continue
         features = _candidate_features(ci, jx, jy, 0.0)
-        s, h = creature_net.net_forward(traits, features)
+        s = creature_net.net_forward(traits, features)
         if best_score is None or s > best_score:
             best_score = s
             best_target = {"type": "creature", "id": j}
-            best_feats = features
-            best_hidden = h
-    creature_state.last_features[ci] = best_feats
-    creature_state.last_hidden[ci] = best_hidden
     return best_target
 
 def _target_position(ci, target):
@@ -146,14 +139,23 @@ def _target_still_valid(ci, target):
 def choose_move(ci):
     x, y = int(creature_state.x[ci]), int(creature_state.y[ci])
     target = creature_state.target[ci]
+    committed = creature_state.commit_ticks[ci] > 0
+    if committed:
+        creature_state.commit_ticks[ci] -= 1
     if not _target_still_valid(ci, target):
         target = select_target(ci)
         creature_state.target[ci] = target
+        creature_state.commit_ticks[ci] = settings.TARGET_COMMIT_TICKS
+    elif not committed:
+        target = select_target(ci)
+        creature_state.target[ci] = target
+        creature_state.commit_ticks[ci] = settings.TARGET_COMMIT_TICKS
     if target is None:
         return x, y
     tx, ty = _target_position(ci, target)
     if tx is None:
         creature_state.target[ci] = None
+        creature_state.commit_ticks[ci] = 0
         return x, y
     if x == tx and y == ty:
         return x, y
@@ -187,14 +189,12 @@ def _respawn_creature(i):
     creature_state.x[i] = spawn_x
     creature_state.y[i] = spawn_y
     creature_state.hp[i] = 100
-    creature_state.gold[creature_state.alive] = 0
     creature_state.gold[i] = 0
     creature_state.alive[i] = True
     creature_state.target[i] = None
-    creature_state.last_features[i] = None
-    creature_state.last_hidden[i] = None
-    creature_state.traits[i] = creature_state.traits[parent].copy()
-    print(f"[respawn] creature {i} copied from {parent}")
+    creature_state.commit_ticks[i] = 0
+    creature_state.traits[i] = creature_net.mutate_traits(creature_state.traits[parent].copy(), settings.MUTATION_STD)
+    print(f"[respawn] creature {i} mutated from {parent}")
 
 def create_creatures(count):
     xs, ys = [], []
@@ -212,8 +212,7 @@ def create_creatures(count):
     creature_state.traits = np.stack([creature_net.init_traits() for _ in range(cap)]).astype(np.float32)
     creature_state.alive = np.zeros(cap, dtype=np.bool_)
     creature_state.target = [None] * cap
-    creature_state.last_features = [None] * cap
-    creature_state.last_hidden = [None] * cap
+    creature_state.commit_ticks = np.zeros(cap, dtype=np.int32)
     for i in range(count):
         creature_state.x[i] = xs[i]
         creature_state.y[i] = ys[i]
@@ -238,6 +237,7 @@ def _cull_one():
     creature_state.alive[victim] = False
     creature_state.hp[victim] = 0
     print(f"[cull] creature {victim} culled (gold={int(creature_state.gold[victim])}, pct={threshold_pct:.1f})")
+    creature_state.gold[creature_state.alive] = 0
     _respawn_creature(victim)
 
 def _breed_one():
@@ -253,7 +253,6 @@ def _effect_fight(i, j):
     loser = j if winner == i else i
     damage = random.randint(5, 20)
     creature_state.hp[loser] = max(0, int(creature_state.hp[loser]) - damage)
-    _apply_hebbian(loser, -settings.HEBBIAN_LR_NEG)
     if creature_state.hp[loser] == 0:
         creature_state.alive[loser] = False
         print(f"[fight] creature {loser} killed by {winner}")
@@ -278,8 +277,8 @@ def check_gold_pickup(i):
     t = creature_state.target[i]
     if t is not None and t.get("type") == "gold" and t.get("gold_index") == gi:
         creature_state.target[i] = None
-    _apply_hebbian(i, settings.HEBBIAN_LR_POS)
-    print(f"[creature {i}] picked up gold at ({px},{py}), total={int(creature_state.gold[i])}")
+        creature_state.commit_ticks[i] = 0
+    if settings.PRINT_PICKUP: print(f"[creature {i}] picked up gold at ({px},{py}), total={int(creature_state.gold[i])}")
 
 def update_creature_move(i):
     x, y = int(creature_state.x[i]), int(creature_state.y[i])
@@ -311,4 +310,3 @@ def update_creatures():
         alive_count = int(np.sum(creature_state.alive))
         if alive_count < settings.CREATURE_COUNT:
             _breed_one()
-
