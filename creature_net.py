@@ -1,6 +1,6 @@
 import numpy as np
 
-NET_IN = 10
+NET_IN = 12
 NET_H = 16
 NET_OUT = 1
 W1_SIZE = NET_IN * NET_H

@@ -38,7 +38,9 @@ def _candidate_features(ci, tx, ty, is_gold_flag):
     alive_indices = np.where(alive_mask)[0]
     gold_vals = creature_state.gold[alive_indices].astype(np.float32)
     rank_norm = float(np.sum(gold_vals < own_gold)) / max(1.0, float(len(alive_indices) - 1))
-    return np.array([dx, dy, dist, density, closer_count, hp_norm, is_gold_flag, own_gold_norm, rank_norm, 1.0], dtype=np.float32)
+    own_x_norm = float(cx) / max(1, settings.GRID_COLS - 1)
+    own_y_norm = float(cy) / max(1, settings.GRID_ROWS - 1)
+    return np.array([dx, dy, dist, density, closer_count, hp_norm, is_gold_flag, own_gold_norm, rank_norm, 1.0, own_x_norm, own_y_norm], dtype=np.float32)
 
 def _astar_first_step(sx, sy, gx, gy, extra_blocked=None):
     if world.is_blocked(gx, gy):
