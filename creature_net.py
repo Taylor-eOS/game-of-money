@@ -1,7 +1,7 @@
 import numpy as np
 
 NET_IN = 12
-NET_H = 16
+NET_H = 64
 NET_OUT = 1
 W1_SIZE = NET_IN * NET_H
 B1_SIZE = NET_H
@@ -31,8 +31,11 @@ def unpack_weights(traits):
 
 def net_forward(traits, features):
     w1, b1, w2, b2 = unpack_weights(traits)
-    h = np.tanh(features @ w1 + b1)
+    h = features @ w1 + b1
+    h = np.where(h > 0, h, 0.01 * h)
     return float((h @ w2 + b2)[0])
 
 def mutate_traits(traits, std):
-    return np.clip(traits + np.random.normal(0.0, std, size=traits.shape).astype(np.float32), -5.0, 5.0)
+    mask = np.random.random(traits.shape) < 0.15
+    noise = np.random.normal(0.0, std, size=traits.shape).astype(np.float32)
+    return np.clip(traits + noise * mask, -8.0, 8.0)

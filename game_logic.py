@@ -179,17 +179,13 @@ def _respawn_creature(i):
     if not alive_indices:
         return
     parent = alive_indices[int(np.argmax(creature_state.gold[alive_indices]))]
-    spawn_x, spawn_y = int(creature_state.x[parent]), int(creature_state.y[parent])
-    attempts = 0
-    while attempts < 100:
-        cx = random.randint(0, settings.GRID_COLS - 1)
-        cy = random.randint(0, settings.GRID_ROWS - 1)
+    cx, cy = random.randint(settings.GRID_COLS // 4, 3 * settings.GRID_COLS // 4), random.randint(settings.GRID_ROWS // 4, 3 * settings.GRID_ROWS // 4)
+    for _ in range(50):
         if not world.is_blocked(cx, cy):
-            spawn_x, spawn_y = cx, cy
             break
-        attempts += 1
-    creature_state.x[i] = spawn_x
-    creature_state.y[i] = spawn_y
+        cx, cy = random.randint(settings.GRID_COLS // 4, 3 * settings.GRID_COLS // 4), random.randint(settings.GRID_ROWS // 4, 3 * settings.GRID_ROWS // 4)
+    creature_state.x[i] = cx
+    creature_state.y[i] = cy
     creature_state.hp[i] = 100
     creature_state.gold[i] = 0
     creature_state.alive[i] = True
@@ -303,6 +299,7 @@ def update_creature_move(i):
 def update_creatures():
     for i in range(len(creature_state.x)):
         if creature_state.alive[i]:
+            creature_state.hp[i] = min(100, int(creature_state.hp[i]) + settings.HP_REGEN)
             update_creature_move(i)
     world.tick()
     t = int(world.world_state.tick_counter)
