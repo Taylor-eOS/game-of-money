@@ -128,16 +128,14 @@ def _target_still_valid(ci, target):
         return gi < settings.GOLD_COUNT and world.world_state.gold_active[gi]
     if target["type"] == "creature":
         j = target["id"]
-        if not (j < len(creature_state.x) and creature_state.alive[j]):
-            return False
-        dist = abs(int(creature_state.x[j]) - int(creature_state.x[ci])) + abs(int(creature_state.y[j]) - int(creature_state.y[ci]))
-        return dist <= 10
+        return j < len(creature_state.x) and creature_state.alive[j]
     return False
 
 def choose_move(ci):
     x, y = int(creature_state.x[ci]), int(creature_state.y[ci])
-    target = select_target(ci)
-    creature_state.target[ci] = target
+    if not _target_still_valid(ci, creature_state.target[ci]):
+        creature_state.target[ci] = select_target(ci)
+    target = creature_state.target[ci]
     if target is None:
         return x, y
     tx, ty = _target_position(ci, target)
@@ -218,8 +216,8 @@ def _cull_one():
     creature_state.alive[victim] = False
     creature_state.hp[victim] = 0
     print(f"[cull] creature {victim} culled (gold={int(creature_state.gold[victim])}, pct={threshold_pct:.1f})")
-    creature_state.gold[creature_state.alive] = 0
     _respawn_creature(victim)
+    creature_state.gold[creature_state.alive] = 0
 
 def _breed_one():
     dead_indices = np.where(~creature_state.alive)[0]
