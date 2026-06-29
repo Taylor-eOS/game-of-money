@@ -137,11 +137,7 @@ def choose_move(ci):
     step = _astar_first_step(x, y, tx, ty)
     return step if step is not None else _random_step(x, y)
 
-def _respawn_creature(i):
-    alive_indices = np.where(creature_state.alive)[0]
-    if len(alive_indices) == 0:
-        return
-    parent = int(alive_indices[np.argmax(creature_state.gold[alive_indices])])
+def _respawn_creature(i, parent):
     cx = random.randint(settings.GRID_COLS // 4, 3 * settings.GRID_COLS // 4)
     cy = random.randint(settings.GRID_ROWS // 4, 3 * settings.GRID_ROWS // 4)
     for _ in range(50):
@@ -156,7 +152,6 @@ def _respawn_creature(i):
     creature_state.alive[i] = True
     creature_state.target[i] = None
     creature_state.traits[i] = creature_net.mutate_traits(creature_state.traits[parent].copy(), settings.MUTATION_STD)
-    print(f"[respawn] creature {i} mutated from {parent} (gold={int(creature_state.gold[parent])})")
 
 def create_creatures(count):
     xs, ys = [], []
@@ -185,27 +180,24 @@ def _cull_one():
     alive_indices = np.where(creature_state.alive)[0]
     if len(alive_indices) < 2:
         return
-    golds = creature_state.gold[alive_indices]
-    top_gold = int(np.max(golds))
-    base = settings.CULL_GOLD_PERCENTILE * 100
-    extra = min(top_gold * settings.CULL_PER_GOLD, settings.CULL_MAX_PERCENTILE * 100 - base)
-    threshold_pct = base + extra
-    threshold = np.percentile(golds, threshold_pct)
-    eligible = alive_indices[golds <= threshold]
-    if len(eligible) == 0:
-        return
-    victim = int(np.random.choice(eligible))
-    creature_state.alive[victim] = False
-    creature_state.hp[victim] = 0
-    print(f"[cull] creature {victim} culled (gold={int(creature_state.gold[victim])}, pct={threshold_pct:.1f})")
-    _respawn_creature(victim)
+    parent = int(alive_indices[np.argmax(creature_state.gold[alive_indices])])
+    alive_gold = creature_state.gold[alive_indices]
+    min_gold = int(np.min(alive_gold))
+    culled = np.where(creature_state.alive & (creature_state.gold == min_gold))[0]
+    print(f"[cull] parent={parent} gold={int(creature_state.gold[parent])}, copied to {len(culled)} creatures with gold={min_gold}")
+    for i in culled:
+        _respawn_creature(int(i), parent)
     creature_state.gold[creature_state.alive] = 0
 
 def _breed_one():
     dead_indices = np.where(~creature_state.alive)[0]
     if len(dead_indices) == 0:
         return
-    _respawn_creature(int(dead_indices[0]))
+    alive_indices = np.where(creature_state.alive)[0]
+    if len(alive_indices) == 0:
+        return
+    parent = int(alive_indices[np.argmax(creature_state.gold[alive_indices])])
+    _respawn_creature(int(dead_indices[0]), parent)
 
 def _interact_gold(i, gi):
     px, py = int(creature_state.x[i]), int(creature_state.y[i])
@@ -228,19 +220,19 @@ def _fight_creatures(i, j):
     creature_state.target[j] = None
     if creature_state.hp[loser] == 0:
         creature_state.alive[loser] = False
-        print(f"[fight] creature {loser} killed by {winner}")
-        _respawn_creature(loser)
+        if settings.PRINT_INTERACTIONS: print(f"[fight] creature {loser} killed by {winner}")
+        _respawn_creature(loser, winner)
     else:
-        print(f"[fight] creature {winner} hit {loser} for {damage}, hp={int(creature_state.hp[loser])}")
+        if settings.PRINT_INTERACTIONS: print(f"[fight] creature {winner} hit {loser} for {damage}, hp={int(creature_state.hp[loser])}")
 
 def _talk_creatures(i, j):
     creature_state.target[i] = None
     creature_state.target[j] = None
-    print(f"[talk] creature {i} talked to creature {j}")
+    if settings.PRINT_INTERACTIONS: print(f"[talk] creature {i} talked to creature {j}")
 
 def _ignore_creatures(i, j):
     creature_state.target[i] = None
-    print(f"[ignore] creature {i} ignored creature {j}")
+    if settings.PRINT_INTERACTIONS: print(f"[ignore] creature {i} ignored creature {j}")
 
 def _choose_creature_interaction(i, j):
     roll = random.random()
