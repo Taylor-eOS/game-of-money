@@ -99,9 +99,6 @@ def select_target(ci):
         if j == ci or not creature_state.alive[j]:
             continue
         jx, jy = int(creature_state.x[j]), int(creature_state.y[j])
-        dist = abs(jx - int(creature_state.x[ci])) + abs(jy - int(creature_state.y[ci]))
-        if dist > 10:
-            continue
         features = _candidate_features(ci, jx, jy, 0.0)
         s = creature_net.net_forward(traits, features)
         if best_score is None or s > best_score:
@@ -237,6 +234,8 @@ def _effect_fight(i, j):
     loser = j if winner == i else i
     damage = random.randint(5, 20)
     creature_state.hp[loser] = max(0, int(creature_state.hp[loser]) - damage)
+    creature_state.target[i] = None
+    creature_state.target[j] = None
     if creature_state.hp[loser] == 0:
         creature_state.alive[loser] = False
         print(f"[fight] creature {loser} killed by {winner}")
@@ -248,7 +247,6 @@ def trigger_creature_interaction(i, j):
     if random.random() < settings.INTERACTION_CHANCE:
         return
     _effect_fight(i, j)
-    creature_state.target[i] = None
 
 def check_gold_pickup(i):
     px, py = int(creature_state.x[i]), int(creature_state.y[i])
