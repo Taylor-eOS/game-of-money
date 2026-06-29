@@ -48,12 +48,8 @@ def _astar_first_step(sx, sy, gx, gy):
     heapq.heappush(open_heap, (0, sx, sy))
     came_from = {}
     g_score = {(sx, sy): 0}
-    nodes_expanded = 0
     while open_heap:
-        if nodes_expanded >= settings.ASTAR_MAX_NODES:
-            break
         _, cx, cy = heapq.heappop(open_heap)
-        nodes_expanded += 1
         if cx == gx and cy == gy:
             cur = (cx, cy)
             while came_from.get(cur) != (sx, sy) and cur in came_from:
@@ -122,26 +118,37 @@ def _target_coords(target):
             return int(creature_state.x[j]), int(creature_state.y[j])
     return None, None
 
+def _random_step(x, y):
+    deltas = list(NEIGHBOR_DELTAS)
+    random.shuffle(deltas)
+    for dx, dy in deltas:
+        nx, ny = x + dx, y + dy
+        if not world.is_blocked(nx, ny):
+            return nx, ny
+    return x, y
+
 def choose_move(ci):
     x, y = int(creature_state.x[ci]), int(creature_state.y[ci])
     target = select_target(ci)
     creature_state.target[ci] = target
     tx, ty = _target_coords(target)
     if tx is None or (x == tx and y == ty):
-        return x, y
+        return _random_step(x, y)
     step = _astar_first_step(x, y, tx, ty)
-    return step if step is not None else (x, y)
+    return step if step is not None else _random_step(x, y)
 
 def _respawn_creature(i):
-    alive_indices = [j for j in range(len(creature_state.x)) if creature_state.alive[j]]
-    if not alive_indices:
+    alive_indices = np.where(creature_state.alive)[0]
+    if len(alive_indices) == 0:
         return
-    parent = alive_indices[int(np.argmax(creature_state.gold[alive_indices]))]
-    cx, cy = random.randint(settings.GRID_COLS // 4, 3 * settings.GRID_COLS // 4), random.randint(settings.GRID_ROWS // 4, 3 * settings.GRID_ROWS // 4)
+    parent = int(alive_indices[np.argmax(creature_state.gold[alive_indices])])
+    cx = random.randint(settings.GRID_COLS // 4, 3 * settings.GRID_COLS // 4)
+    cy = random.randint(settings.GRID_ROWS // 4, 3 * settings.GRID_ROWS // 4)
     for _ in range(50):
         if not world.is_blocked(cx, cy):
             break
-        cx, cy = random.randint(settings.GRID_COLS // 4, 3 * settings.GRID_COLS // 4), random.randint(settings.GRID_ROWS // 4, 3 * settings.GRID_ROWS // 4)
+        cx = random.randint(settings.GRID_COLS // 4, 3 * settings.GRID_COLS // 4)
+        cy = random.randint(settings.GRID_ROWS // 4, 3 * settings.GRID_ROWS // 4)
     creature_state.x[i] = cx
     creature_state.y[i] = cy
     creature_state.hp[i] = 100
@@ -210,7 +217,7 @@ def _interact_gold(i, gi):
     if settings.PRINT_PICKUP:
         print(f"[creature {i}] picked up gold at ({px},{py}), total={int(creature_state.gold[i])}")
 
-def _interact_creature(i, j):
+def _fight_creatures(i, j):
     power_i = float(creature_state.traits[i, 0]) + random.random()
     power_j = float(creature_state.traits[j, 0]) + random.random()
     winner = i if power_i >= power_j else j
@@ -226,6 +233,24 @@ def _interact_creature(i, j):
     else:
         print(f"[fight] creature {winner} hit {loser} for {damage}, hp={int(creature_state.hp[loser])}")
 
+def _talk_creatures(i, j):
+    creature_state.target[i] = None
+    creature_state.target[j] = None
+    print(f"[talk] creature {i} talked to creature {j}")
+
+def _ignore_creatures(i, j):
+    creature_state.target[i] = None
+    print(f"[ignore] creature {i} ignored creature {j}")
+
+def _choose_creature_interaction(i, j):
+    roll = random.random()
+    if roll < 0.5:
+        _fight_creatures(i, j)
+    elif roll < 0.8:
+        _talk_creatures(i, j)
+    else:
+        _ignore_creatures(i, j)
+
 def _dispatch_interactions(i):
     x, y = int(creature_state.x[i]), int(creature_state.y[i])
     gi = _gold_index_at(x, y)
@@ -234,7 +259,7 @@ def _dispatch_interactions(i):
         return
     j = _creature_at(x, y, exclude=i)
     if j is not None:
-        _interact_creature(i, j)
+        _choose_creature_interaction(i, j)
 
 def update_move(i):
     nx, ny = choose_move(i)
