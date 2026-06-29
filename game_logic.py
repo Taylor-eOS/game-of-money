@@ -15,7 +15,6 @@ class CreatureState:
     traits: np.ndarray = field(default_factory=lambda: np.empty((0, creature_net.TRAIT_DIM), dtype=np.float32))
     alive: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.bool_))
     target: list = field(default_factory=list)
-    commit_ticks: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
 
 creature_state = CreatureState()
 NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
@@ -140,24 +139,13 @@ def _target_still_valid(ci, target):
 
 def choose_move(ci):
     x, y = int(creature_state.x[ci]), int(creature_state.y[ci])
-    target = creature_state.target[ci]
-    committed = creature_state.commit_ticks[ci] > 0
-    if committed:
-        creature_state.commit_ticks[ci] -= 1
-    if not _target_still_valid(ci, target):
-        target = select_target(ci)
-        creature_state.target[ci] = target
-        creature_state.commit_ticks[ci] = settings.TARGET_COMMIT_TICKS
-    elif not committed:
-        target = select_target(ci)
-        creature_state.target[ci] = target
-        creature_state.commit_ticks[ci] = settings.TARGET_COMMIT_TICKS
+    target = select_target(ci)
+    creature_state.target[ci] = target
     if target is None:
         return x, y
     tx, ty = _target_position(ci, target)
     if tx is None:
         creature_state.target[ci] = None
-        creature_state.commit_ticks[ci] = 0
         return x, y
     if x == tx and y == ty:
         return x, y
@@ -190,7 +178,6 @@ def _respawn_creature(i):
     creature_state.gold[i] = 0
     creature_state.alive[i] = True
     creature_state.target[i] = None
-    creature_state.commit_ticks[i] = 0
     creature_state.traits[i] = creature_net.mutate_traits(creature_state.traits[parent].copy(), settings.MUTATION_STD)
     print(f"[respawn] creature {i} mutated from {parent}")
 
@@ -210,7 +197,6 @@ def create_creatures(count):
     creature_state.traits = np.stack([creature_net.init_traits() for _ in range(cap)]).astype(np.float32)
     creature_state.alive = np.zeros(cap, dtype=np.bool_)
     creature_state.target = [None] * cap
-    creature_state.commit_ticks = np.zeros(cap, dtype=np.int32)
     for i in range(count):
         creature_state.x[i] = xs[i]
         creature_state.y[i] = ys[i]
@@ -262,6 +248,7 @@ def trigger_creature_interaction(i, j):
     if random.random() < settings.INTERACTION_CHANCE:
         return
     _effect_fight(i, j)
+    creature_state.target[i] = None
 
 def check_gold_pickup(i):
     px, py = int(creature_state.x[i]), int(creature_state.y[i])
@@ -275,7 +262,6 @@ def check_gold_pickup(i):
     t = creature_state.target[i]
     if t is not None and t.get("type") == "gold" and t.get("gold_index") == gi:
         creature_state.target[i] = None
-        creature_state.commit_ticks[i] = 0
     if settings.PRINT_PICKUP: print(f"[creature {i}] picked up gold at ({px},{py}), total={int(creature_state.gold[i])}")
 
 def update_creature_move(i):
