@@ -41,12 +41,9 @@ def _candidate_features(ci, tx, ty, is_gold_flag):
     own_y_norm = float(cy) / max(1, settings.GRID_ROWS - 1)
     return np.array([dx, dy, dist, density, closer_count, hp_norm, is_gold_flag, own_gold_norm, rank_norm, 1.0, own_x_norm, own_y_norm], dtype=np.float32)
 
-def _astar_first_step(sx, sy, gx, gy, extra_blocked=None):
-    if world.is_blocked(gx, gy):
+def _astar_first_step(sx, sy, gx, gy):
+    if world.is_blocked(gx, gy) or (sx == gx and sy == gy):
         return None
-    if sx == gx and sy == gy:
-        return None
-    blocked = extra_blocked or set()
     open_heap = []
     heapq.heappush(open_heap, (0, sx, sy))
     came_from = {}
@@ -64,7 +61,7 @@ def _astar_first_step(sx, sy, gx, gy, extra_blocked=None):
             return cur
         for dx, dy in NEIGHBOR_DELTAS:
             nx, ny = cx + dx, cy + dy
-            if world.is_blocked(nx, ny) or (nx, ny) in blocked:
+            if world.is_blocked(nx, ny):
                 continue
             tentative_g = g_score[(cx, cy)] + 1
             if tentative_g < g_score.get((nx, ny), float('inf')):
@@ -82,6 +79,12 @@ def _gold_index_at(x, y):
             return i
     return None
 
+def _creature_at(x, y, exclude):
+    for j in range(len(creature_state.x)):
+        if j != exclude and creature_state.alive[j] and int(creature_state.x[j]) == x and int(creature_state.y[j]) == y:
+            return j
+    return None
+
 def select_target(ci):
     traits = creature_state.traits[ci]
     best_score = None
@@ -94,7 +97,7 @@ def select_target(ci):
         s = creature_net.net_forward(traits, features)
         if best_score is None or s > best_score:
             best_score = s
-            best_target = {"type": "gold", "gold_index": gi, "pos": (gx, gy)}
+            best_target = {"type": "gold", "gold_index": gi}
     for j in range(len(creature_state.x)):
         if j == ci or not creature_state.alive[j]:
             continue
@@ -106,56 +109,28 @@ def select_target(ci):
             best_target = {"type": "creature", "id": j}
     return best_target
 
-def _target_position(ci, target):
+def _target_coords(target):
     if target is None:
         return None, None
     if target["type"] == "gold":
         gi = target["gold_index"]
-        if world.world_state.gold_active[gi]:
+        if gi < settings.GOLD_COUNT and world.world_state.gold_active[gi]:
             return int(world.world_state.gold_x[gi]), int(world.world_state.gold_y[gi])
-        return None, None
-    if target["type"] == "creature":
+    elif target["type"] == "creature":
         j = target["id"]
         if j < len(creature_state.x) and creature_state.alive[j]:
             return int(creature_state.x[j]), int(creature_state.y[j])
     return None, None
 
-def _target_still_valid(ci, target):
-    if target is None:
-        return False
-    if target["type"] == "gold":
-        gi = target["gold_index"]
-        return gi < settings.GOLD_COUNT and world.world_state.gold_active[gi]
-    if target["type"] == "creature":
-        j = target["id"]
-        return j < len(creature_state.x) and creature_state.alive[j]
-    return False
-
 def choose_move(ci):
     x, y = int(creature_state.x[ci]), int(creature_state.y[ci])
-    if not _target_still_valid(ci, creature_state.target[ci]):
-        creature_state.target[ci] = select_target(ci)
-    target = creature_state.target[ci]
-    if target is None:
+    target = select_target(ci)
+    creature_state.target[ci] = target
+    tx, ty = _target_coords(target)
+    if tx is None or (x == tx and y == ty):
         return x, y
-    tx, ty = _target_position(ci, target)
-    if tx is None:
-        creature_state.target[ci] = None
-        return x, y
-    if x == tx and y == ty:
-        return x, y
-    occupied = set(zip(creature_state.x[creature_state.alive].tolist(),
-                       creature_state.y[creature_state.alive].tolist()))
-    occupied.discard((x, y))
-    occupied.discard((tx, ty))
-    step = _astar_first_step(x, y, tx, ty, extra_blocked=occupied)
-    if step is not None:
-        return step
-    for dx, dy in random.sample(list(NEIGHBOR_DELTAS), len(NEIGHBOR_DELTAS)):
-        nx, ny = x + dx, y + dy
-        if not world.is_blocked(nx, ny) and (nx, ny) not in occupied:
-            return nx, ny
-    return x, y
+    step = _astar_first_step(x, y, tx, ty)
+    return step if step is not None else (x, y)
 
 def _respawn_creature(i):
     alive_indices = [j for j in range(len(creature_state.x)) if creature_state.alive[j]]
@@ -174,7 +149,7 @@ def _respawn_creature(i):
     creature_state.alive[i] = True
     creature_state.target[i] = None
     creature_state.traits[i] = creature_net.mutate_traits(creature_state.traits[parent].copy(), settings.MUTATION_STD)
-    print(f"[respawn] creature {i} mutated from {parent}")
+    print(f"[respawn] creature {i} mutated from {parent} (gold={int(creature_state.gold[parent])})")
 
 def create_creatures(count):
     xs, ys = [], []
@@ -225,7 +200,17 @@ def _breed_one():
         return
     _respawn_creature(int(dead_indices[0]))
 
-def _effect_fight(i, j):
+def _interact_gold(i, gi):
+    px, py = int(creature_state.x[i]), int(creature_state.y[i])
+    world.world_state.gold_active[gi] = False
+    world.remove_target(world.gold_target_id(gi))
+    creature_state.gold[i] += 1
+    creature_state.target[i] = None
+    world.spawn_gold(gi)
+    if settings.PRINT_PICKUP:
+        print(f"[creature {i}] picked up gold at ({px},{py}), total={int(creature_state.gold[i])}")
+
+def _interact_creature(i, j):
     power_i = float(creature_state.traits[i, 0]) + random.random()
     power_j = float(creature_state.traits[j, 0]) + random.random()
     winner = i if power_i >= power_j else j
@@ -241,48 +226,28 @@ def _effect_fight(i, j):
     else:
         print(f"[fight] creature {winner} hit {loser} for {damage}, hp={int(creature_state.hp[loser])}")
 
-def trigger_creature_interaction(i, j):
-    if random.random() < settings.INTERACTION_CHANCE:
-        return
-    _effect_fight(i, j)
-
-def check_gold_pickup(i):
-    px, py = int(creature_state.x[i]), int(creature_state.y[i])
-    gi = _gold_index_at(px, py)
-    if gi is None:
-        return
-    world.world_state.gold_active[gi] = False
-    world.remove_target(world.gold_target_id(gi))
-    creature_state.gold[i] += 1
-    world.spawn_gold(gi)
-    t = creature_state.target[i]
-    if t is not None and t.get("type") == "gold" and t.get("gold_index") == gi:
-        creature_state.target[i] = None
-    if settings.PRINT_PICKUP: print(f"[creature {i}] picked up gold at ({px},{py}), total={int(creature_state.gold[i])}")
-
-def update_creature_move(i):
+def _dispatch_interactions(i):
     x, y = int(creature_state.x[i]), int(creature_state.y[i])
-    nx, ny = choose_move(i)
-    if nx == x and ny == y:
+    gi = _gold_index_at(x, y)
+    if gi is not None:
+        _interact_gold(i, gi)
         return
-    target_creature_id = None
-    for j in range(len(creature_state.x)):
-        if i != j and creature_state.alive[j] and int(creature_state.x[j]) == nx and int(creature_state.y[j]) == ny:
-            target_creature_id = j
-            break
-    if target_creature_id is None:
-        creature_state.x[i] = nx
-        creature_state.y[i] = ny
-        world.world_state.visit[ny, nx] += 1
-        check_gold_pickup(i)
-    else:
-        trigger_creature_interaction(i, target_creature_id)
+    j = _creature_at(x, y, exclude=i)
+    if j is not None:
+        _interact_creature(i, j)
+
+def update_move(i):
+    nx, ny = choose_move(i)
+    creature_state.x[i] = nx
+    creature_state.y[i] = ny
+    world.world_state.visit[ny, nx] += 1
+    _dispatch_interactions(i)
 
 def update_creatures():
     for i in range(len(creature_state.x)):
         if creature_state.alive[i]:
             creature_state.hp[i] = min(100, int(creature_state.hp[i]) + settings.HP_REGEN)
-            update_creature_move(i)
+            update_move(i)
     world.tick()
     t = int(world.world_state.tick_counter)
     if settings.CULL_INTERVAL > 0 and t % settings.CULL_INTERVAL == 0:
