@@ -24,3 +24,14 @@ WALLS = [
 AREAS = [
     (10, 10, 30, 40, "inside"),
 ]
+
+def _build_wall_cells():
+    cells = set()
+    for x1, y1, x2, y2 in WALLS:
+        for x in range(min(x1, x2), max(x1, x2) + 1):
+            for y in range(min(y1, y2), max(y1, y2) + 1):
+                cells.add((x, y))
+    return cells
+
+WALL_CELLS = _build_wall_cells()
+

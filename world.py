@@ -17,15 +17,11 @@ class WorldState:
 world_state = WorldState()
 
 def init_world():
-    world_state.blocks = set()
+    world_state.blocks = set(settings.WALL_CELLS)
     world_state.areas = []
     world_state.tick_counter = 0
     world_state.active_targets = []
     world_state.creature_count = 0
-    for x1, y1, x2, y2 in settings.WALLS:
-        for x in range(min(x1, x2), max(x1, x2) + 1):
-            for y in range(min(y1, y2), max(y1, y2) + 1):
-                world_state.blocks.add((x, y))
     for x1, y1, x2, y2, name in settings.AREAS:
         world_state.areas.append((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2), name))
     world_state.gold_x = np.zeros(settings.GOLD_COUNT, dtype=np.int32)

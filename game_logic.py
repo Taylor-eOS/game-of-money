@@ -185,7 +185,7 @@ def _replace():
     min_gold = int(np.min(alive_gold))
     culled = np.where(creature_state.alive & (creature_state.gold == min_gold))[0]
     dead = np.where(~creature_state.alive)[0]
-    print(f"[cull] parent {parent} ({int(creature_state.gold[parent])}) copied to {len(culled)} low-gold and {len(dead)} dead")
+    print(f"[cull] parent {parent} (gold {int(creature_state.gold[parent])}) copied to {len(culled)} (gold {min_gold}), {len(dead)} dead")
     for i in culled:
         _respawn_creature(int(i), parent)
     for i in dead:
