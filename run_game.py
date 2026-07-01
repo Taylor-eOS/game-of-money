@@ -6,8 +6,8 @@ import sprites
 import settings
 
 pygame.init()
-CELL_W = settings.GRID_SCALE
-CELL_H = settings.GRID_SCALE
+CELL_W = settings.VISUAL_SCALE
+CELL_H = settings.VISUAL_SCALE
 WIDTH = settings.GRID_COLS * CELL_W
 HEIGHT = settings.GRID_ROWS * CELL_H
 GOLD_COLOR = (255, 215, 0)
@@ -66,7 +66,7 @@ def main():
     screen = init_display()
     world.init_world()
     game_logic.create_creatures(settings.CREATURE_COUNT)
-    sprites.bake_creature_surfaces(settings.CREATURE_COUNT)
+    sprites.bake_creature_surfaces(settings.CREATURE_SLOTS)
     clock = pygame.time.Clock()
     while True:
         handle_events()

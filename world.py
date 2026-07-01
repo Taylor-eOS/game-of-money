@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 class WorldState:
     blocks: set = field(default_factory=set)
     areas: list = field(default_factory=list)
-    visit: np.ndarray = field(default_factory=lambda: np.empty((0, 0), dtype=np.int32))
     gold_x: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     gold_y: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     gold_active: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.bool_))
@@ -23,15 +22,12 @@ def init_world():
     world_state.tick_counter = 0
     world_state.active_targets = []
     world_state.creature_count = 0
-    if hasattr(settings, "WALLS"):
-        for x1, y1, x2, y2 in settings.WALLS:
-            for x in range(min(x1, x2), max(x1, x2) + 1):
-                for y in range(min(y1, y2), max(y1, y2) + 1):
-                    world_state.blocks.add((x, y))
-    if hasattr(settings, "AREAS"):
-        for x1, y1, x2, y2, name in settings.AREAS:
-            world_state.areas.append((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2), name))
-    world_state.visit = np.zeros((settings.GRID_ROWS, settings.GRID_COLS), dtype=np.int32)
+    for x1, y1, x2, y2 in settings.WALLS:
+        for x in range(min(x1, x2), max(x1, x2) + 1):
+            for y in range(min(y1, y2), max(y1, y2) + 1):
+                world_state.blocks.add((x, y))
+    for x1, y1, x2, y2, name in settings.AREAS:
+        world_state.areas.append((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2), name))
     world_state.gold_x = np.zeros(settings.GOLD_COUNT, dtype=np.int32)
     world_state.gold_y = np.zeros(settings.GOLD_COUNT, dtype=np.int32)
     world_state.gold_active = np.zeros(settings.GOLD_COUNT, dtype=np.bool_)

@@ -161,7 +161,7 @@ def create_creatures(count):
         if not world.is_blocked(x, y):
             xs.append(x)
             ys.append(y)
-    cap = settings.CREATURE_COUNT
+    cap = settings.CREATURE_SLOTS
     creature_state.x = np.zeros(cap, dtype=np.int32)
     creature_state.y = np.zeros(cap, dtype=np.int32)
     creature_state.hp = np.zeros(cap, dtype=np.int32)
@@ -176,7 +176,7 @@ def create_creatures(count):
         creature_state.alive[i] = True
     world.set_creature_count(cap)
 
-def _cull_one():
+def _replace():
     alive_indices = np.where(creature_state.alive)[0]
     if len(alive_indices) < 2:
         return
@@ -184,20 +184,13 @@ def _cull_one():
     alive_gold = creature_state.gold[alive_indices]
     min_gold = int(np.min(alive_gold))
     culled = np.where(creature_state.alive & (creature_state.gold == min_gold))[0]
-    print(f"[cull] parent={parent} gold={int(creature_state.gold[parent])}, copied to {len(culled)} creatures with gold={min_gold}")
+    dead = np.where(~creature_state.alive)[0]
+    print(f"[cull] parent {parent} ({int(creature_state.gold[parent])}) copied to {len(culled)} low-gold and {len(dead)} dead")
     for i in culled:
         _respawn_creature(int(i), parent)
+    for i in dead:
+        _respawn_creature(int(i), parent)
     creature_state.gold[creature_state.alive] = 0
-
-def _breed_one():
-    dead_indices = np.where(~creature_state.alive)[0]
-    if len(dead_indices) == 0:
-        return
-    alive_indices = np.where(creature_state.alive)[0]
-    if len(alive_indices) == 0:
-        return
-    parent = int(alive_indices[np.argmax(creature_state.gold[alive_indices])])
-    _respawn_creature(int(dead_indices[0]), parent)
 
 def _interact_gold(i, gi):
     px, py = int(creature_state.x[i]), int(creature_state.y[i])
@@ -221,7 +214,6 @@ def _fight_creatures(i, j):
     if creature_state.hp[loser] == 0:
         creature_state.alive[loser] = False
         if settings.PRINT_INTERACTIONS: print(f"[fight] creature {loser} killed by {winner}")
-        _respawn_creature(loser, winner)
     else:
         if settings.PRINT_INTERACTIONS: print(f"[fight] creature {winner} hit {loser} for {damage}, hp={int(creature_state.hp[loser])}")
 
@@ -257,7 +249,6 @@ def update_move(i):
     nx, ny = choose_move(i)
     creature_state.x[i] = nx
     creature_state.y[i] = ny
-    world.world_state.visit[ny, nx] += 1
     _dispatch_interactions(i)
 
 def update_creatures():
@@ -268,8 +259,4 @@ def update_creatures():
     world.tick()
     t = int(world.world_state.tick_counter)
     if settings.CULL_INTERVAL > 0 and t % settings.CULL_INTERVAL == 0:
-        _cull_one()
-    if settings.BREED_INTERVAL > 0 and t % settings.BREED_INTERVAL == 0:
-        alive_count = int(np.sum(creature_state.alive))
-        if alive_count < settings.CREATURE_COUNT:
-            _breed_one()
+        _replace()
