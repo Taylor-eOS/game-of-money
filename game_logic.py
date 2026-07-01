@@ -130,7 +130,7 @@ def _respawn_creature(i, parent):
     creature_state.gold[i] = 0
     creature_state.alive[i] = True
     creature_state.target[i] = None
-    creature_state.traits[i] = creature_net.mutate_traits(creature_state.traits[parent].copy(), settings.MUTATION_STD)
+    creature_state.traits[i] = creature_net.mutate_traits(creature_state.traits[parent].copy())
 
 def create_creatures(count):
     xs, ys = [], []
@@ -164,7 +164,7 @@ def _replace():
     min_gold = int(np.min(alive_gold))
     culled = np.where(creature_state.alive & (creature_state.gold == min_gold))[0]
     dead = np.where(~creature_state.alive)[0]
-    print(f"[cull] parent {parent} gold {int(creature_state.gold[parent])} copied to {len(culled)} gold {min_gold}, {len(dead)} dead")
+    print(f"[cull] parent {parent} ({int(creature_state.gold[parent])}) copied to {len(culled)} ({min_gold}), {len(dead)} dead")
     for i in culled:
         _respawn_creature(int(i), parent)
     for i in dead:

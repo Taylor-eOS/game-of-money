@@ -1,5 +1,6 @@
 import numpy as np
 import features
+import settings
 
 NET_IN = features.feature_count()
 NET_H = 64
@@ -36,7 +37,8 @@ def net_forward(traits, features):
     h = np.where(h > 0, h, 0.01 * h)
     return float((h @ w2 + b2)[0])
 
-def mutate_traits(traits, std):
-    mask = np.random.random(traits.shape) < 0.15
-    noise = np.random.normal(0.0, std, size=traits.shape).astype(np.float32)
+def mutate_traits(traits):
+    mask = np.random.random(traits.shape) < settings.MUTATION_PROB
+    noise = np.random.normal(0.0, settings.MUTATION_STD, size=traits.shape).astype(np.float32)
     return np.clip(traits + noise * mask, -8.0, 8.0)
+
