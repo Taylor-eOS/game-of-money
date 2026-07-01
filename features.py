@@ -14,25 +14,38 @@ def register_feature(name):
 def feature_count():
     return len(FEATURE_REGISTRY)
 
-def _ctx(creature_state, ci, tx, ty, object_type):
+def build_creature_ctx(creature_state, ci):
     cx, cy = int(creature_state.x[ci]), int(creature_state.y[ci])
-    manhattan = abs(tx - cx) + abs(ty - cy)
     alive_mask = creature_state.alive
     alive_x = creature_state.x[alive_mask]
     alive_y = creature_state.y[alive_mask]
+    alive_indices = np.where(alive_mask)[0]
+    own_gold = float(creature_state.gold[ci])
+    gold_vals = creature_state.gold[alive_indices].astype(np.float32)
+    rank_norm = float(np.sum(gold_vals < own_gold)) / max(1.0, float(len(alive_indices) - 1))
     return {
         "ci": ci,
         "cx": cx,
         "cy": cy,
-        "tx": tx,
-        "ty": ty,
-        "manhattan": manhattan,
         "alive_mask": alive_mask,
         "alive_x": alive_x,
         "alive_y": alive_y,
-        "object_type": object_type,
+        "alive_indices": alive_indices,
+        "own_gold": own_gold,
+        "own_hp": float(creature_state.hp[ci]),
+        "rank_norm": rank_norm,
         "creature_state": creature_state,
     }
+
+def _ctx(creature_ctx, tx, ty, object_type):
+    cx, cy = creature_ctx["cx"], creature_ctx["cy"]
+    manhattan = abs(tx - cx) + abs(ty - cy)
+    ctx = dict(creature_ctx)
+    ctx["tx"] = tx
+    ctx["ty"] = ty
+    ctx["manhattan"] = manhattan
+    ctx["object_type"] = object_type
+    return ctx
 
 @register_feature("dx")
 def _f_dx(ctx):
@@ -60,7 +73,7 @@ def _f_closer_count(ctx):
 
 @register_feature("hp_norm")
 def _f_hp_norm(ctx):
-    return float(ctx["creature_state"].hp[ctx["ci"]]) / 100.0
+    return ctx["own_hp"] / 100.0
 
 @register_feature("is_gold")
 def _f_is_gold(ctx):
@@ -68,16 +81,11 @@ def _f_is_gold(ctx):
 
 @register_feature("own_gold_norm")
 def _f_own_gold_norm(ctx):
-    own_gold = float(ctx["creature_state"].gold[ctx["ci"]])
-    return np.log1p(own_gold) / np.log1p(50.0)
+    return np.log1p(ctx["own_gold"]) / np.log1p(50.0)
 
 @register_feature("rank_norm")
 def _f_rank_norm(ctx):
-    creature_state = ctx["creature_state"]
-    own_gold = float(creature_state.gold[ctx["ci"]])
-    alive_indices = np.where(ctx["alive_mask"])[0]
-    gold_vals = creature_state.gold[alive_indices].astype(np.float32)
-    return float(np.sum(gold_vals < own_gold)) / max(1.0, float(len(alive_indices) - 1))
+    return ctx["rank_norm"]
 
 @register_feature("bias")
 def _f_bias(ctx):
@@ -91,7 +99,7 @@ def _f_own_x_norm(ctx):
 def _f_own_y_norm(ctx):
     return float(ctx["cy"]) / max(1, settings.GRID_ROWS - 1)
 
-def build_features(creature_state, ci, tx, ty, object_type):
-    ctx = _ctx(creature_state, ci, tx, ty, object_type)
+def build_features(creature_ctx, tx, ty, object_type):
+    ctx = _ctx(creature_ctx, tx, ty, object_type)
     values = [fn(ctx) for fn in FEATURE_REGISTRY]
     return np.array(values, dtype=np.float32)

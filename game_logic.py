@@ -62,13 +62,14 @@ def _creature_at(x, y, exclude):
 
 def select_target(ci):
     traits = creature_state.traits[ci]
+    creature_ctx = features.build_creature_ctx(creature_state, ci)
     best_score = None
     best_target = None
     for gi in range(settings.GOLD_COUNT):
         if not world.world_state.gold_active[gi]:
             continue
         gx, gy = int(world.world_state.gold_x[gi]), int(world.world_state.gold_y[gi])
-        feat = features.build_features(creature_state, ci, gx, gy, "gold")
+        feat = features.build_features(creature_ctx, gx, gy, "gold")
         s = creature_net.net_forward(traits, feat)
         if best_score is None or s > best_score:
             best_score = s
@@ -77,7 +78,7 @@ def select_target(ci):
         if j == ci or not creature_state.alive[j]:
             continue
         jx, jy = int(creature_state.x[j]), int(creature_state.y[j])
-        feat = features.build_features(creature_state, ci, jx, jy, "creature")
+        feat = features.build_features(creature_ctx, jx, jy, "creature")
         s = creature_net.net_forward(traits, feat)
         if best_score is None or s > best_score:
             best_score = s
