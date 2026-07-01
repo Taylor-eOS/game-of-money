@@ -1,6 +1,7 @@
 import numpy as np
+import features
 
-NET_IN = 12
+NET_IN = features.feature_count()
 NET_H = 64
 NET_OUT = 1
 W1_SIZE = NET_IN * NET_H

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import world
 import settings
 import creature_net
+import features
 
 @dataclass
 class CreatureState:
@@ -18,28 +19,6 @@ class CreatureState:
 
 creature_state = CreatureState()
 NEIGHBOR_DELTAS = ((0, -1), (0, 1), (1, 0), (-1, 0))
-
-def _candidate_features(ci, tx, ty, is_gold_flag):
-    cx, cy = int(creature_state.x[ci]), int(creature_state.y[ci])
-    manhattan = abs(tx - cx) + abs(ty - cy)
-    dx = float(tx - cx) / max(settings.GRID_COLS, settings.GRID_ROWS)
-    dy = float(ty - cy) / max(settings.GRID_COLS, settings.GRID_ROWS)
-    dist = np.log1p(float(manhattan)) / np.log1p(settings.GRID_COLS + settings.GRID_ROWS)
-    r = settings.DENSITY_RADIUS
-    alive_mask = creature_state.alive
-    alive_x = creature_state.x[alive_mask]
-    alive_y = creature_state.y[alive_mask]
-    density = float(np.sum((np.abs(alive_x - tx) + np.abs(alive_y - ty)) <= r)) / settings.DENSITY_NORM
-    closer_count = float(np.sum((np.abs(alive_x - tx) + np.abs(alive_y - ty)) < manhattan)) / max(1.0, float(np.sum(alive_mask)))
-    hp_norm = float(creature_state.hp[ci]) / 100.0
-    own_gold = float(creature_state.gold[ci])
-    own_gold_norm = np.log1p(own_gold) / np.log1p(50.0)
-    alive_indices = np.where(alive_mask)[0]
-    gold_vals = creature_state.gold[alive_indices].astype(np.float32)
-    rank_norm = float(np.sum(gold_vals < own_gold)) / max(1.0, float(len(alive_indices) - 1))
-    own_x_norm = float(cx) / max(1, settings.GRID_COLS - 1)
-    own_y_norm = float(cy) / max(1, settings.GRID_ROWS - 1)
-    return np.array([dx, dy, dist, density, closer_count, hp_norm, is_gold_flag, own_gold_norm, rank_norm, 1.0, own_x_norm, own_y_norm], dtype=np.float32)
 
 def _astar_first_step(sx, sy, gx, gy):
     if world.is_blocked(gx, gy) or (sx == gx and sy == gy):
@@ -89,8 +68,8 @@ def select_target(ci):
         if not world.world_state.gold_active[gi]:
             continue
         gx, gy = int(world.world_state.gold_x[gi]), int(world.world_state.gold_y[gi])
-        features = _candidate_features(ci, gx, gy, 1.0)
-        s = creature_net.net_forward(traits, features)
+        feat = features.build_features(creature_state, ci, gx, gy, "gold")
+        s = creature_net.net_forward(traits, feat)
         if best_score is None or s > best_score:
             best_score = s
             best_target = {"type": "gold", "gold_index": gi}
@@ -98,8 +77,8 @@ def select_target(ci):
         if j == ci or not creature_state.alive[j]:
             continue
         jx, jy = int(creature_state.x[j]), int(creature_state.y[j])
-        features = _candidate_features(ci, jx, jy, 0.0)
-        s = creature_net.net_forward(traits, features)
+        feat = features.build_features(creature_state, ci, jx, jy, "creature")
+        s = creature_net.net_forward(traits, feat)
         if best_score is None or s > best_score:
             best_score = s
             best_target = {"type": "creature", "id": j}
@@ -185,7 +164,7 @@ def _replace():
     min_gold = int(np.min(alive_gold))
     culled = np.where(creature_state.alive & (creature_state.gold == min_gold))[0]
     dead = np.where(~creature_state.alive)[0]
-    print(f"[cull] parent {parent} (gold {int(creature_state.gold[parent])}) copied to {len(culled)} (gold {min_gold}), {len(dead)} dead")
+    print(f"[cull] parent {parent} gold {int(creature_state.gold[parent])} copied to {len(culled)} gold {min_gold}, {len(dead)} dead")
     for i in culled:
         _respawn_creature(int(i), parent)
     for i in dead:
@@ -195,7 +174,6 @@ def _replace():
 def _interact_gold(i, gi):
     px, py = int(creature_state.x[i]), int(creature_state.y[i])
     world.world_state.gold_active[gi] = False
-    world.remove_target(world.gold_target_id(gi))
     creature_state.gold[i] += 1
     creature_state.target[i] = None
     world.spawn_gold(gi)
@@ -203,8 +181,8 @@ def _interact_gold(i, gi):
         print(f"[creature {i}] picked up gold at ({px},{py}), total={int(creature_state.gold[i])}")
 
 def _fight_creatures(i, j):
-    power_i = float(creature_state.traits[i, 0]) + random.random()
-    power_j = float(creature_state.traits[j, 0]) + random.random()
+    power_i = float(creature_state.gold[i]) + random.random()
+    power_j = float(creature_state.gold[j]) + random.random()
     winner = i if power_i >= power_j else j
     loser = j if winner == i else i
     damage = random.randint(5, 20)

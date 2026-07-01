@@ -10,7 +10,6 @@ class WorldState:
     gold_x: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     gold_y: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.int32))
     gold_active: np.ndarray = field(default_factory=lambda: np.empty(0, dtype=np.bool_))
-    active_targets: list = field(default_factory=list)
     creature_count: int = 0
     tick_counter: int = 0
 
@@ -20,7 +19,6 @@ def init_world():
     world_state.blocks = set(settings.WALL_CELLS)
     world_state.areas = []
     world_state.tick_counter = 0
-    world_state.active_targets = []
     world_state.creature_count = 0
     for x1, y1, x2, y2, name in settings.AREAS:
         world_state.areas.append((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2), name))
@@ -30,7 +28,6 @@ def init_world():
 
 def set_creature_count(count):
     world_state.creature_count = count
-    world_state.active_targets = list(range(count))
     for i in range(settings.GOLD_COUNT):
         spawn_gold(i)
 
@@ -48,18 +45,8 @@ def spawn_gold(gold_index):
             world_state.gold_x[gold_index] = x
             world_state.gold_y[gold_index] = y
             world_state.gold_active[gold_index] = True
-            target_id = world_state.creature_count + gold_index
-            if target_id not in world_state.active_targets:
-                world_state.active_targets.append(target_id)
             return
         attempts += 1
-
-def gold_target_id(gold_index):
-    return world_state.creature_count + gold_index
-
-def remove_target(target_id):
-    if target_id in world_state.active_targets:
-        world_state.active_targets.remove(target_id)
 
 def get_gold_positions():
     return [(int(world_state.gold_x[i]), int(world_state.gold_y[i])) for i in range(settings.GOLD_COUNT) if world_state.gold_active[i]]
